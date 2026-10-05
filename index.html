@@ -29,7 +29,7 @@
   <!-- Background Image -->
   <img
     id="custom-bg"
-    src="https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?w=1920&q=80"
+    src="https://picsum.photos/id/1015/1920/1080"
     alt="Rainy background"
     crossorigin="anonymous"
   />
@@ -49,39 +49,65 @@
     <span class="loader-text">Loading...</span>
   </div>
 
-  <!-- Widgets -->
-  <div class="widgets-container" id="widgets-container" aria-hidden="false">
-    <div class="datetime-widget" id="datetime-widget" role="timer" aria-label="Current date and time">
-      <div class="time">
+  <!-- Widgets Stack (centered iOS style) -->
+  <div class="widgets-stack" id="widgets-container">
+
+    <!-- Clock Card -->
+    <div class="glass-card clock-card" id="datetime-widget">
+      <div class="clock-time">
         <span id="time-display">--:--</span>
-        <span class="time-seconds" id="time-seconds" aria-hidden="true">--</span>
+        <span class="clock-seconds" id="time-seconds">--</span>
       </div>
-      <div class="date" id="date-display">--</div>
-      <div class="day-name" id="day-display">--</div>
-      <div class="day-phase" id="day-phase">
-        <span id="day-phase-icon">🌙</span>
+      <div class="clock-date" id="date-display">--</div>
+      <div class="clock-day" id="day-display">--</div>
+      <div class="clock-pill" id="day-phase">
+        <span class="pill-icon" id="day-phase-icon">☀️</span>
         <span id="day-phase-text">--</span>
       </div>
     </div>
 
-    <div class="weather-widget" id="weather-widget" aria-label="Current weather">
-      <div class="weather-location" id="weather-location">Jeddah, SA</div>
-      <div class="weather-main">
-        <span class="weather-temp" id="weather-temp">--°</span>
-        <span class="weather-icon" id="weather-icon">☁</span>
+    <!-- Weather Card -->
+    <div class="glass-card weather-card" id="weather-widget">
+      <div class="weather-header">
+        <div class="weather-loc-wrap">
+          <span class="loc-pin">📍</span>
+          <span class="loc-name" id="weather-location">--</span>
+          <span class="loc-dot">•</span>
+          <span class="loc-time" id="weather-time">--:--</span>
+        </div>
+        <div class="weather-updated" id="weather-updated">--:--</div>
       </div>
-      <div class="weather-desc" id="weather-desc">Loading...</div>
-      <div class="weather-details">
-        <span class="weather-detail">
-          <span class="detail-icon">💧</span>
-          <span id="weather-humidity">--%</span>
-        </span>
-        <span class="weather-detail">
-          <span class="detail-icon">💨</span>
-          <span id="weather-wind">-- km/h</span>
-        </span>
+
+      <div class="weather-hero">
+        <div class="weather-icon-big" id="weather-icon">☀️</div>
+        <div class="weather-temp-wrap">
+          <span class="weather-temp" id="weather-temp">--</span>
+          <span class="weather-unit">°C</span>
+        </div>
+      </div>
+
+      <div class="weather-desc" id="weather-desc">--</div>
+
+      <div class="weather-stats">
+        <div class="stat-box">
+          <div class="stat-icon">💧</div>
+          <div class="stat-value" id="weather-humidity">--%</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-icon">💨</div>
+          <div class="stat-value" id="weather-wind">-- km/h</div>
+        </div>
+        <div class="stat-box">
+          <div class="stat-icon">🌡️</div>
+          <div class="stat-value" id="weather-feels">--°</div>
+        </div>
+      </div>
+
+      <div class="weather-forecast" id="weather-forecast">
+        <!-- Filled by JS -->
       </div>
     </div>
+
   </div>
 
   <!-- Top-Right UI Buttons -->
