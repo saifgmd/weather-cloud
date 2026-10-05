@@ -1,0 +1,23 @@
+{
+  "name": "Weather Cloud",
+  "short_name": "Weather Cloud",
+  "description": "Interactive rainy window with WebGL raindrops. By SAIF G.M.D",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0e14",
+  "theme_color": "#0a0e14",
+  "lang": "en",
+  "dir": "ltr",
+  "author": "SAIF G.M.D",
+  "categories": ["weather", "lifestyle", "entertainment"],
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
