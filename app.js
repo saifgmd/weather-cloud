@@ -1441,8 +1441,8 @@
     }
   };
 
-  // =====================================================================
-  // PART 25 — WEATHER
+    // =====================================================================
+  // PART 25 — WEATHER (with Reverse Geocoding)
   // =====================================================================
   const Weather = {
     elLocation: $id("weather-location"),
@@ -1458,24 +1458,70 @@
     defaultCoords: { lat: 21.4858, lon: 39.1925, name: "Jeddah, SA" },
 
     init() {
+      // 1. حمّل المدينة الافتراضية أولًا (Jeddah)
       this.fetch(
         this.defaultCoords.lat,
         this.defaultCoords.lon,
         this.defaultCoords.name
       );
 
+      // 2. اطلب الموقع الحقيقي من المتصفح
       if ("geolocation" in navigator) {
         navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            this.fetch(
-              pos.coords.latitude,
-              pos.coords.longitude,
-              "My Location"
-            );
+          async (pos) => {
+            const lat = pos.coords.latitude;
+            const lon = pos.coords.longitude;
+
+            // ابحث عن اسم المدينة من الإحداثيات
+            const cityName = await this.reverseGeocode(lat, lon);
+
+            // ثم اجلب الطقس
+            this.fetch(lat, lon, cityName);
           },
-          () => {},
-          { timeout: 5000, maximumAge: 600000 }
+          (err) => {
+            console.log("Geolocation denied or failed:", err.message);
+            // لا شيء — تبقى بيانات Jeddah
+          },
+          { timeout: 7000, maximumAge: 600000 }
         );
+      }
+    },
+
+    // Reverse Geocoding — تحويل الإحداثيات إلى اسم مدينة
+    async reverseGeocode(lat, lon) {
+      try {
+        // BigDataCloud — مجاني بدون مفتاح
+        const res = await fetch(
+          `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`
+        );
+
+        if (!res.ok) throw new Error("Reverse geocode failed");
+
+        const data = await res.json();
+
+        // حاول استخراج اسم المدينة + الدولة
+        const city =
+          data.city ||
+          data.locality ||
+          data.principalSubdivision ||
+          data.localityInfo?.administrative?.[2]?.name ||
+          null;
+
+        const countryCode = data.countryCode || "";
+        const country = data.countryName || "";
+
+        if (city && countryCode) {
+          return `${city}, ${countryCode}`;
+        } else if (city) {
+          return city;
+        } else if (country) {
+          return country;
+        } else {
+          return "My Location";
+        }
+      } catch (err) {
+        console.warn("Reverse geocoding failed:", err.message);
+        return "My Location";
       }
     },
 
