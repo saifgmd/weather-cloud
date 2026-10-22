@@ -13,11 +13,16 @@
   "author": "SAIF G.M.D",
   "categories": ["weather", "lifestyle", "entertainment"],
   "icons": [
-    {
-      "src": "favicon.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any"
-    }
-  ]
-}
+  {
+    "src": "favicon.svg",
+    "sizes": "any",
+    "type": "image/svg+xml",
+    "purpose": "any"
+  },
+  {
+    "src": "favicon.svg",
+    "sizes": "any",
+    "type": "image/svg+xml",
+    "purpose": "maskable"
+  }
+]
