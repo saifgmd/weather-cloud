@@ -1,12 +1,69 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#6cf"/>
-      <stop offset="1" stop-color="#8af"/>
+    <!-- خلفية 3D داكنة -->
+    <linearGradient id="dark3dBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E293B"/>
+      <stop offset="100%" stop-color="#0B1120"/>
     </linearGradient>
+
+    <!-- الشمس 3D -->
+    <radialGradient id="dark3dSun" cx="35%" cy="30%" r="70%">
+      <stop offset="0%" stop-color="#FEF3C7"/>
+      <stop offset="40%" stop-color="#FBBF24"/>
+      <stop offset="100%" stop-color="#D97706"/>
+    </radialGradient>
+
+    <!-- السحابة 3D داكنة -->
+    <linearGradient id="dark3dCloud" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#F1F5F9"/>
+      <stop offset="60%" stop-color="#CBD5E1"/>
+      <stop offset="100%" stop-color="#64748B"/>
+    </linearGradient>
+
+    <!-- ظل خارجي -->
+    <filter id="darkDropShadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="10"/>
+      <feOffset dx="0" dy="12" result="offsetblur"/>
+      <feComponentTransfer>
+        <feFuncA type="linear" slope="0.5"/>
+      </feComponentTransfer>
+      <feMerge>
+        <feMergeNode/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
   </defs>
-  <rect width="100" height="100" rx="22" fill="#0a0e14"/>
-  <circle cx="50" cy="42" r="16" fill="url(#g)" opacity="0.9"/>
-  <path d="M50 58 Q38 75 50 88 Q62 75 50 58 Z" fill="url(#g)" opacity="0.75"/>
-  <circle cx="42" cy="38" r="3" fill="#fff" opacity="0.55"/>
+
+  <!-- خلفية 3D داكنة -->
+  <rect width="512" height="512" rx="110" fill="url(#dark3dBg)"/>
+
+  <!-- بروز داخلي للخلفية -->
+  <rect x="15" y="15" width="482" height="482" rx="95" 
+        fill="none" stroke="#334155" stroke-width="2" opacity="0.8"/>
+
+  <!-- وهج الشمس -->
+  <circle cx="340" cy="185" r="115" fill="#FBBF24" opacity="0.15"/>
+  <circle cx="340" cy="185" r="85" fill="#FBBF24" opacity="0.22"/>
+
+  <!-- الشمس 3D -->
+  <circle cx="340" cy="185" r="65" fill="url(#dark3dSun)" filter="url(#darkDropShadow)"/>
+  <ellipse cx="320" cy="165" rx="20" ry="12" fill="#FFFFFF" opacity="0.6"/>
+
+  <!-- السحابة 3D -->
+  <g filter="url(#darkDropShadow)">
+    <circle cx="180" cy="285" r="70" fill="url(#dark3dCloud)"/>
+    <circle cx="270" cy="260" r="85" fill="url(#dark3dCloud)"/>
+    <circle cx="355" cy="295" r="60" fill="url(#dark3dCloud)"/>
+    <rect x="115" y="290" width="295" height="75" rx="37" fill="url(#dark3dCloud)"/>
+  </g>
+
+  <!-- بروز علوي على السحابة -->
+  <ellipse cx="200" cy="250" rx="40" ry="20" fill="#FFFFFF" opacity="0.7"/>
+  <ellipse cx="300" cy="240" rx="30" ry="15" fill="#FFFFFF" opacity="0.6"/>
+
+  <!-- ظل داخلي سفلي -->
+  <ellipse cx="250" cy="360" rx="140" ry="15" fill="#334155" opacity="0.6"/>
+
+  <!-- لمعان نهائي -->
+  <ellipse cx="160" cy="100" rx="150" ry="50" fill="#FFFFFF" opacity="0.05"/>
 </svg>
