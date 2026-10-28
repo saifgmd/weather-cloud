@@ -1,20 +1,29 @@
 /* =====================================================================
  *  Weather Cloud
  *  --------------------------------------------------------------------
- *  Interactive rainy window with WebGL raindrops, live clock, weather.
+ *  Interactive rainy window with WebGL raindrops, live clock, weather,
+ *  city/village search, 24-hour and 5-day forecast.
  *
  *  @project  Weather Cloud
  *  @author   SAIF G.M.D
- *  @version  1.0.0
+ *  @version  1.1.0
  * ===================================================================== */
 
 (function () {
   "use strict";
 
+  const APP_VERSION = "1.1.0";
+
   // =====================================================================
   // PART 1 — RAINYGLASS ENGINE (Self-contained WebGL raindrops)
+  // ---------------------------------------------------------------------
+  // The canvas is transparent everywhere except inside the drops, so the
+  // CSS-filtered background (blur / brightness) stays visible. Each drop
+  // acts like a small lens showing an inverted, sharper view of the scene.
   // =====================================================================
-  const MAX_DROPLETS = 120;
+  const MAX_DROPLETS = 80;      // 80 vec3 uniforms — fits mobile GPU limits
+  const BG_SCALE = 1.05;        // must match CSS scale() on #custom-bg / #custom-video
+  const MAX_TEXTURE_DIM = 2048; // large uploads are downscaled before upload
 
   class RainyGlass {
     constructor(canvas, options = {}) {
@@ -24,46 +33,70 @@
       this.gl = null;
       this.program = null;
       this.texture = null;
+      this.u = {};
 
       this.options = Object.assign(
         {
-          dropletsRate: 45,
+          dropletsRate: 14,   // new drops per second
           maxDroplets: MAX_DROPLETS,
-          minRadius: 8,
-          maxRadius: 38,
-          fallSpeed: 0.18,
-          refraction: 1.4,
-          blurStrength: 0.9,
-          highlight: 0.35
+          minRadius: 5,       // CSS px
+          maxRadius: 22,      // CSS px
+          slideChance: 0.4,
+          fallSpeed: 0.22,    // screen heights per second (max)
+          refraction: 0.6,
+          highlight: 0.45,
+          reducedMotion: false
         },
         options
       );
 
       this.droplets = [];
+      this.dropData = new Float32Array(MAX_DROPLETS * 3);
       this.lastSpawn = 0;
       this.lastTime = 0;
+      this.frame = 0;
       this.isRunning = false;
       this.isDestroyed = false;
       this.rafId = null;
-      this.dpr = Math.min(window.devicePixelRatio || 1, 2);
-      this.bgImage = null;
+      this.dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+
+      this.source = null;
+      this.sourceIsVideo = false;
+      this.videoTainted = false;
+      this.hasTexture = false;
+      this.cover = [1 / BG_SCALE, 1 / BG_SCALE];
+      this.scratch = document.createElement("canvas");
 
       this._loop = this._loop.bind(this);
       this._onResize = this._onResize.bind(this);
+      this._onContextLost = (e) => {
+        e.preventDefault();
+        this.stop();
+        this.program = null;
+        this.texture = null;
+      };
+      this._onContextRestored = () => {
+        this._initWebGL();
+        if (this.source) this.setSource(this.source);
+        this.start();
+      };
 
       this._initWebGL();
       this.resize();
       window.addEventListener("resize", this._onResize);
+      canvas.addEventListener("webglcontextlost", this._onContextLost, false);
+      canvas.addEventListener("webglcontextrestored", this._onContextRestored, false);
+    }
+
+    get isReady() {
+      return !!(this.gl && this.program);
     }
 
     _initWebGL() {
+      const attrs = { alpha: true, premultipliedAlpha: true, antialias: false };
       const gl =
-        this.canvas.getContext("webgl", {
-          alpha: true,
-          premultipliedAlpha: false,
-          antialias: true
-        }) ||
-        this.canvas.getContext("experimental-webgl", { alpha: true });
+        this.canvas.getContext("webgl", attrs) ||
+        this.canvas.getContext("experimental-webgl", attrs);
 
       if (!gl) {
         console.warn("[RainyGlass] WebGL not supported");
@@ -81,49 +114,60 @@
       `;
 
       const fragSrc = `
-        precision highp float;
+        precision mediump float;
         #define MAX_DROPLETS ${MAX_DROPLETS}
         varying vec2 v_uv;
         uniform sampler2D u_bg;
         uniform vec2 u_resolution;
         uniform int u_count;
-        uniform vec2 u_droplets[MAX_DROPLETS];
-        uniform float u_radii[MAX_DROPLETS];
+        uniform vec3 u_drops[MAX_DROPLETS];   // x px, y px, radius px
+        uniform vec2 u_cover;                 // object-fit: cover mapping
+        uniform float u_hasTex;               // 0 = plain glass drops (no CORS)
         uniform float u_refraction;
-        uniform float u_blur;
         uniform float u_highlight;
 
+        vec2 coverUV(vec2 uv) {
+          return clamp((uv - 0.5) * u_cover + 0.5, 0.0, 1.0);
+        }
+
         void main() {
-          vec2 uv = v_uv;
-          vec2 pixel = uv * u_resolution;
+          vec2 p = v_uv * u_resolution;
 
           for (int i = 0; i < MAX_DROPLETS; i++) {
             if (i >= u_count) break;
-            vec2 dpos = u_droplets[i] * u_resolution;
-            float r = u_radii[i];
-            vec2 diff = pixel - dpos;
+            vec3 d = u_drops[i];
+            vec2 diff = p - d.xy;
+            diff.y *= 0.9;                    // slightly taller than wide
             float dist = length(diff);
+            float r = d.z;
 
-            if (dist < r) {
-              float ratio = dist / r;
-              float strength = (1.0 - ratio) * u_refraction * 0.028;
-              vec2 dir = dist > 0.0 ? normalize(diff) : vec2(0.0);
-              uv += dir * strength;
+            if (r > 0.5 && dist < r) {
+              float t = dist / r;             // 0 center -> 1 edge
+              vec2 n = diff / r;              // -1..1 inside the drop
+              float edge = 1.0 - smoothstep(r - 1.5, r, dist);
 
-              float b = (1.0 - ratio) * u_blur * 0.004;
-              vec4 c1 = texture2D(u_bg, uv + vec2(b, 0.0));
-              vec4 c2 = texture2D(u_bg, uv - vec2(b, 0.0));
-              vec4 c3 = texture2D(u_bg, uv + vec2(0.0, b));
-              vec4 c4 = texture2D(u_bg, uv - vec2(0.0, b));
-              vec4 blurred = (c1 + c2 + c3 + c4) * 0.25;
+              // Lens: inverted, minified view of the scene behind the drop
+              vec2 sp = d.xy - diff * (u_refraction * 4.0);
+              vec3 col = texture2D(u_bg, coverUV(sp / u_resolution)).rgb;
 
-              float highlight = smoothstep(0.82, 1.0, ratio);
-              gl_FragColor = mix(blurred, vec4(1.0), highlight * u_highlight);
+              float rim = smoothstep(0.6, 1.0, t);
+              col *= mix(1.08, 0.55, rim);
+
+              vec2 hl = n - vec2(-0.32, 0.38);
+              float spec = 1.0 - smoothstep(0.0, 0.32, length(hl));
+              col += spec * u_highlight;
+
+              // Plain mode: glassy outline + highlight only
+              float plainA = edge * (0.06 + rim * 0.32 + spec * 0.55);
+              vec3 color = mix(vec3(1.0), col, u_hasTex);
+              float alpha = mix(plainA, edge, u_hasTex);
+
+              gl_FragColor = vec4(color * alpha, alpha);
               return;
             }
           }
 
-          gl_FragColor = texture2D(u_bg, uv);
+          gl_FragColor = vec4(0.0);
         }
       `;
 
@@ -144,14 +188,10 @@
       gl.enableVertexAttribArray(aPos);
       gl.vertexAttribPointer(aPos, 2, gl.FLOAT, false, 0, 0);
 
-      this.uBg = gl.getUniformLocation(this.program, "u_bg");
-      this.uResolution = gl.getUniformLocation(this.program, "u_resolution");
-      this.uCount = gl.getUniformLocation(this.program, "u_count");
-      this.uDroplets = gl.getUniformLocation(this.program, "u_droplets");
-      this.uRadii = gl.getUniformLocation(this.program, "u_radii");
-      this.uRefraction = gl.getUniformLocation(this.program, "u_refraction");
-      this.uBlur = gl.getUniformLocation(this.program, "u_blur");
-      this.uHighlight = gl.getUniformLocation(this.program, "u_highlight");
+      ["u_bg", "u_resolution", "u_count", "u_drops", "u_cover", "u_hasTex", "u_refraction", "u_highlight"]
+        .forEach((name) => {
+          this.u[name] = gl.getUniformLocation(this.program, name);
+        });
 
       this.texture = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, this.texture);
@@ -163,9 +203,7 @@
         gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
         new Uint8Array([10, 10, 20, 255])
       );
-
-      gl.enable(gl.BLEND);
-      gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+      gl.disable(gl.BLEND);
     }
 
     _createProgram(vertSrc, fragSrc) {
@@ -197,33 +235,82 @@
       return shader;
     }
 
-    loadBackground(source) {
-      if (!this.gl) return Promise.reject(new Error("WebGL not initialized"));
+    _upload(el) {
+      const gl = this.gl;
+      gl.bindTexture(gl.TEXTURE_2D, this.texture);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, el);
+    }
 
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
+    /**
+     * Use an <img> or <video> element (already loaded in the page) as the
+     * scene behind the drops. Cross-origin media without CORS can't be read
+     * by WebGL; in that case the drops fall back to plain glass drops.
+     */
+    setSource(el) {
+      this.source = el || null;
+      this.sourceIsVideo = !!el && el.tagName === "VIDEO";
+      this.videoTainted = false;
+      this.hasTexture = false;
+      if (!this.isReady || !el) return false;
 
-        img.onload = () => {
-          const gl = this.gl;
-          gl.bindTexture(gl.TEXTURE_2D, this.texture);
-          gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
-          gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
-          this.bgImage = img;
-          resolve(img);
-        };
+      if (this.sourceIsVideo) {
+        this._updateCover();
+        return true; // uploaded every other frame in _render
+      }
 
-        img.onerror = () => reject(new Error("Failed to load background"));
-        img.src = source;
-      });
+      const w = el.naturalWidth;
+      const h = el.naturalHeight;
+      if (!w || !h) return false;
+
+      try {
+        let src = el;
+        if (Math.max(w, h) > MAX_TEXTURE_DIM) {
+          const s = MAX_TEXTURE_DIM / Math.max(w, h);
+          this.scratch.width = Math.round(w * s);
+          this.scratch.height = Math.round(h * s);
+          this.scratch.getContext("2d").drawImage(el, 0, 0, this.scratch.width, this.scratch.height);
+          src = this.scratch;
+        }
+        this._upload(src);
+        this.hasTexture = true;
+      } catch (err) {
+        // SecurityError: cross-origin image without CORS headers
+        this.hasTexture = false;
+      } finally {
+        this.scratch.width = this.scratch.height = 1;
+      }
+      this._updateCover();
+      return this.hasTexture;
+    }
+
+    _updateCover() {
+      const el = this.source;
+      const iw = el ? (this.sourceIsVideo ? el.videoWidth : el.naturalWidth) : 0;
+      const ih = el ? (this.sourceIsVideo ? el.videoHeight : el.naturalHeight) : 0;
+      if (!iw || !ih || !this.canvas.height) {
+        this.cover = [1 / BG_SCALE, 1 / BG_SCALE];
+        return;
+      }
+      const cA = this.canvas.width / this.canvas.height;
+      const iA = iw / ih;
+      let sx = 1;
+      let sy = 1;
+      if (cA > iA) sy = iA / cA;
+      else sx = cA / iA;
+      this.cover = [sx / BG_SCALE, sy / BG_SCALE];
     }
 
     setOptions(partial) {
       Object.assign(this.options, partial);
+      if (this.droplets.length > this.options.maxDroplets) {
+        this.droplets.length = this.options.maxDroplets;
+      }
     }
 
     start() {
-      if (this.isRunning || this.isDestroyed) return;
+      if (this.isRunning || this.isDestroyed || !this.isReady) return;
       this.isRunning = true;
       this.lastTime = performance.now();
       this.rafId = requestAnimationFrame(this._loop);
@@ -244,12 +331,15 @@
       this.canvas.height = Math.floor(h * this.dpr);
       this.canvas.style.width = w + "px";
       this.canvas.style.height = h + "px";
+      this._updateCover();
     }
 
     destroy() {
       this.isDestroyed = true;
       this.stop();
       window.removeEventListener("resize", this._onResize);
+      this.canvas.removeEventListener("webglcontextlost", this._onContextLost);
+      this.canvas.removeEventListener("webglcontextrestored", this._onContextRestored);
       const gl = this.gl;
       if (gl) {
         if (this.texture) gl.deleteTexture(this.texture);
@@ -260,7 +350,6 @@
       this.gl = null;
       this.program = null;
       this.texture = null;
-      console.log("[RainyGlass] destroyed");
     }
 
     _onResize() {
@@ -276,32 +365,56 @@
       this.rafId = requestAnimationFrame(this._loop);
     }
 
-    _updateDroplets(dt) {
-      const opts = this.options;
-      this.lastSpawn += dt;
-      const spawnInterval = 1 / opts.dropletsRate;
+    _spawn() {
+      const o = this.options;
+      const span = o.maxRadius - o.minRadius;
+      const r = o.minRadius + Math.pow(Math.random(), 2.2) * span; // mostly small drops
+      const slides =
+        !o.reducedMotion && r > o.minRadius + span * 0.3 && Math.random() < o.slideChance;
+      this.droplets.push({
+        x: Math.random(),
+        y: Math.random() * 0.95,
+        r,
+        rNow: 0,
+        vy: 0,
+        slides,
+        delay: slides ? 0.4 + Math.random() * 2.5 : 0,
+        life: 0,
+        ttl: 5 + Math.random() * 10,
+        wobble: Math.random() * Math.PI * 2
+      });
+    }
 
-      while (this.lastSpawn > spawnInterval) {
-        this.lastSpawn -= spawnInterval;
-        if (this.droplets.length < opts.maxDroplets) {
-          this.droplets.push({
-            x: Math.random(),
-            y: -0.05 - Math.random() * 0.1,
-            r: opts.minRadius + Math.random() * (opts.maxRadius - opts.minRadius),
-            vy: opts.fallSpeed * (0.7 + Math.random() * 0.8),
-            vx: (Math.random() - 0.5) * 0.015,
-            life: 1
-          });
+    _updateDroplets(dt) {
+      const o = this.options;
+
+      if (o.dropletsRate > 0 && o.maxDroplets > 0) {
+        this.lastSpawn += dt;
+        const interval = 1 / o.dropletsRate;
+        while (this.lastSpawn > interval) {
+          this.lastSpawn -= interval;
+          if (this.droplets.length < Math.min(o.maxDroplets, MAX_DROPLETS)) this._spawn();
         }
+      } else {
+        this.lastSpawn = 0;
       }
 
       for (let i = this.droplets.length - 1; i >= 0; i--) {
         const d = this.droplets[i];
-        d.y += d.vy * dt;
-        d.x += d.vx * dt;
-        d.vy += 0.03 * dt;
-        d.life -= dt * 0.06;
-        if (d.y > 1.15 || d.life <= 0) this.droplets.splice(i, 1);
+        d.life += dt;
+        d.rNow = d.r * Math.min(1, d.life / 0.15);
+
+        if (d.slides && d.life > d.delay) {
+          const target = o.fallSpeed * (0.35 + d.r / o.maxRadius);
+          d.vy += (target - d.vy) * Math.min(1, dt * 2);
+          d.y += d.vy * dt;
+          d.x += Math.sin(d.life * 3 + d.wobble) * dt * 0.004;
+          if (d.y > 1.08) this.droplets.splice(i, 1);
+        } else if (!d.slides && d.life > d.ttl) {
+          const fade = 1 - (d.life - d.ttl) / 1.5;
+          if (fade <= 0) this.droplets.splice(i, 1);
+          else d.rNow *= fade;
+        }
       }
     }
 
@@ -309,33 +422,53 @@
       const gl = this.gl;
       if (!gl || !this.program) return;
 
-      gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+      const W = this.canvas.width;
+      const H = this.canvas.height;
+      if (!W || !H) return;
+
+      // Live video texture (every other frame to save bandwidth)
+      if (this.sourceIsVideo && !this.videoTainted && this.source) {
+        this.frame++;
+        const v = this.source;
+        if (v.readyState >= 2 && v.videoWidth && this.frame % 2 === 0) {
+          try {
+            this._upload(v);
+            if (!this.hasTexture) {
+              this.hasTexture = true;
+              this._updateCover();
+            }
+          } catch (err) {
+            this.videoTainted = true; // cross-origin video without CORS
+            this.hasTexture = false;
+          }
+        }
+      }
+
+      gl.viewport(0, 0, W, H);
       gl.clearColor(0, 0, 0, 0);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.useProgram(this.program);
 
       const count = Math.min(this.droplets.length, MAX_DROPLETS);
-      const positions = new Float32Array(MAX_DROPLETS * 2);
-      const radii = new Float32Array(MAX_DROPLETS);
-
+      const data = this.dropData;
       for (let i = 0; i < count; i++) {
         const d = this.droplets[i];
-        positions[i * 2] = d.x;
-        positions[i * 2 + 1] = 1 - d.y;
-        radii[i] = (d.r / this.canvas.width) * this.dpr * 1.2;
+        data[i * 3] = d.x * W;
+        data[i * 3 + 1] = (1 - d.y) * H;
+        data[i * 3 + 2] = d.rNow * this.dpr;
       }
 
-      gl.uniform1i(this.uCount, count);
-      gl.uniform2fv(this.uDroplets, positions);
-      gl.uniform1fv(this.uRadii, radii);
-      gl.uniform2f(this.uResolution, this.canvas.width, this.canvas.height);
-      gl.uniform1f(this.uRefraction, this.options.refraction);
-      gl.uniform1f(this.uBlur, this.options.blurStrength);
-      gl.uniform1f(this.uHighlight, this.options.highlight);
+      gl.uniform1i(this.u.u_count, count);
+      gl.uniform3fv(this.u.u_drops, data);
+      gl.uniform2f(this.u.u_resolution, W, H);
+      gl.uniform2f(this.u.u_cover, this.cover[0], this.cover[1]);
+      gl.uniform1f(this.u.u_hasTex, this.hasTexture ? 1 : 0);
+      gl.uniform1f(this.u.u_refraction, this.options.refraction);
+      gl.uniform1f(this.u.u_highlight, this.options.highlight);
 
       gl.activeTexture(gl.TEXTURE0);
       gl.bindTexture(gl.TEXTURE_2D, this.texture);
-      gl.uniform1i(this.uBg, 0);
+      gl.uniform1i(this.u.u_bg, 0);
 
       gl.drawArrays(gl.TRIANGLES, 0, 6);
     }
@@ -348,23 +481,37 @@
     return document.getElementById(id);
   }
 
-  function throttle(func, limit) {
-    let inThrottle;
-    return function (...args) {
-      if (!inThrottle) {
-        func.apply(this, args);
-        inThrottle = true;
-        setTimeout(() => (inThrottle = false), limit);
-      }
+  /** Run fn at most once per animation frame, always with the latest state. */
+  function rafBatch(fn) {
+    let queued = false;
+    return function () {
+      if (queued) return;
+      queued = true;
+      requestAnimationFrame(() => {
+        queued = false;
+        fn();
+      });
     };
   }
 
   function debounce(func, wait) {
     let timeout;
-    return function (...args) {
+    const debounced = function (...args) {
       clearTimeout(timeout);
       timeout = setTimeout(() => func.apply(this, args), wait);
     };
+    debounced.cancel = () => clearTimeout(timeout);
+    return debounced;
+  }
+
+  function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
+  /** parseInt + clamp, keeping 0 as a valid value. */
+  function clampInt(value, min, max, fallback) {
+    const n = parseInt(value, 10);
+    return Number.isFinite(n) ? Math.min(max, Math.max(min, n)) : fallback;
   }
 
   function isValidUrl(string) {
@@ -387,8 +534,72 @@
   }
 
   function isVideoUrl(url) {
-    return /\.(mp4|webm|ogg|mov)(\?|$)/i.test(url);
+    return /\.(mp4|webm|ogg|mov)(\?|#|$)/i.test(url);
   }
+
+  function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    })[c]);
+  }
+
+  function createEl(tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    if (text != null) el.textContent = text;
+    return el;
+  }
+
+  function flagEmoji(cc) {
+    if (!/^[A-Z]{2}$/.test(cc || "")) return "📍";
+    return String.fromCodePoint(...[...cc].map((c) => 0x1f1a5 + c.charCodeAt(0)));
+  }
+
+  function formatTime12(h24, m) {
+    const hh = String(h24 % 12 || 12).padStart(2, "0");
+    const mm = String(m).padStart(2, "0");
+    return `${hh}:${mm} ${h24 >= 12 ? "PM" : "AM"}`;
+  }
+
+  const LS_KEYS = {
+    settings: "weatherCloudSettings",
+    location: "weatherCloudLocation",
+    recents: "weatherCloudRecents",
+    weather: "weatherCloudLastWeather"
+  };
+
+  function storeGet(key, fallback = null) {
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function storeSet(key, value) {
+    try {
+      localStorage.setItem(key, JSON.stringify(value));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function storeRemove(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch {}
+  }
+
+  const reducedMotionQuery = window.matchMedia
+    ? window.matchMedia("(prefers-reduced-motion: reduce)")
+    : { matches: false };
+
+  const LANG = (() => {
+    const l = (navigator.language || "en").slice(0, 2).toLowerCase();
+    return /^[a-z]{2}$/.test(l) ? l : "en";
+  })();
 
   // =====================================================================
   // PART 3 — DEVICE DETECTION
@@ -401,9 +612,6 @@
         ) || window.innerWidth <= 768
       );
     },
-    isIOS() {
-      return /iPad|iPhone|iPod/.test(navigator.userAgent);
-    },
     getMaxBlur() {
       return this.isMobile() ? 15 : 25;
     }
@@ -413,6 +621,15 @@
   // PART 4 — FULLSCREEN
   // =====================================================================
   const FullscreenAPI = {
+    supported() {
+      const el = document.documentElement;
+      return !!(
+        el.requestFullscreen ||
+        el.webkitRequestFullscreen ||
+        el.mozRequestFullScreen ||
+        el.msRequestFullscreen
+      );
+    },
     isFullscreen() {
       return !!(
         document.fullscreenElement ||
@@ -430,18 +647,17 @@
         element.msRequestFullscreen;
       if (!requestMethod) {
         showToast("Fullscreen not supported", "error");
-        return Promise.reject(new Error("Not supported"));
+        return Promise.resolve();
       }
       try {
         const result = requestMethod.call(element);
         if (result && typeof result.then === "function") {
           return result.catch((err) => console.warn("Fullscreen error:", err));
         }
-        return Promise.resolve();
       } catch (err) {
-        console.error("Fullscreen exception:", err);
-        return Promise.reject(err);
+        console.warn("Fullscreen exception:", err);
       }
+      return Promise.resolve();
     },
     exit() {
       const exitMethod =
@@ -455,9 +671,8 @@
           if (result && typeof result.then === "function") {
             return result.catch((err) => console.warn("Exit error:", err));
           }
-          return Promise.resolve();
         } catch (err) {
-          return Promise.reject(err);
+          console.warn("Exit exception:", err);
         }
       }
       return Promise.resolve();
@@ -469,106 +684,91 @@
       const btn = $id("btn-fullscreen");
       if (!btn) return;
       btn.textContent = isFullscreen ? "✕" : "⛶";
-      btn.setAttribute(
-        "aria-label",
-        isFullscreen ? "Exit fullscreen" : "Enter fullscreen mode"
-      );
-      btn.title = isFullscreen ? "Exit Fullscreen" : "Fullscreen";
+      btn.setAttribute("aria-label", isFullscreen ? "Exit fullscreen" : "Enter fullscreen");
+      btn.title = isFullscreen ? "Exit fullscreen (F)" : "Fullscreen (F)";
       btn.classList.toggle("active", isFullscreen);
     },
     init() {
-      const self = this;
-      [
-        "fullscreenchange",
-        "webkitfullscreenchange",
-        "mozfullscreenchange",
-        "MSFullscreenChange"
-      ].forEach((eventName) => {
-        document.addEventListener(
-          eventName,
-          () => self.updateButtonIcon(self.isFullscreen()),
-          false
-        );
-      });
+      const btn = $id("btn-fullscreen");
+      if (!this.supported()) {
+        if (btn) btn.hidden = true; // e.g. iPhone Safari
+        return;
+      }
+      ["fullscreenchange", "webkitfullscreenchange", "mozfullscreenchange", "MSFullscreenChange"]
+        .forEach((eventName) => {
+          document.addEventListener(eventName, () => this.updateButtonIcon(this.isFullscreen()));
+        });
+      if (btn) {
+        btn.addEventListener("click", (e) => {
+          e.preventDefault();
+          this.toggle();
+        });
+      }
     }
   };
 
   // =====================================================================
   // PART 5 — AUDIO MANAGER
+  // ---------------------------------------------------------------------
+  // Sources are tried in order (data-sources="a.mp3, b.mp3"): put a local
+  // rain.mp3 first so the sound also works offline.
   // =====================================================================
   const AudioManager = {
     audio: null,
     sources: [],
-    currentSourceIndex: 0,
-    allSourcesFailed: false,
-    loadAttempts: 0,
-    maxLoadAttempts: 3,
+    index: 0,
+    failed: false,
+    wantPlaying: false,
 
     init(audioElement) {
       if (!audioElement) {
-        console.warn("AudioManager: no audio element provided");
-        this.allSourcesFailed = true;
+        this.failed = true;
         return;
       }
       this.audio = audioElement;
-      this.sources = Array.from(audioElement.querySelectorAll("source"))
-        .map((s) => s.src || s.getAttribute("src"))
+      this.sources = (audioElement.dataset.sources || "")
+        .split(",")
+        .map((s) => s.trim())
         .filter(Boolean);
 
-      if (this.sources.length === 0 && !audioElement.src) {
+      if (this.sources.length === 0) {
         console.warn("AudioManager: no audio sources found");
-        this.allSourcesFailed = true;
+        this.failed = true;
         return;
       }
-      this.setupEventListeners();
+      audioElement.addEventListener("error", () => this._next());
+      audioElement.addEventListener("play", syncSoundUI);
+      audioElement.addEventListener("pause", syncSoundUI);
+      audioElement.src = this.sources[0];
     },
 
-    setupEventListeners() {
-      if (!this.audio) return;
-      const self = this;
-      this.audio.addEventListener(
-        "error",
-        () => {
-          console.warn("Audio source error:", self.audio && self.audio.currentSrc);
-          self.tryNextSource();
-        },
-        true
-      );
-      this.audio.addEventListener("loadeddata", () => {
-        console.log("Audio loaded:", self.audio && self.audio.currentSrc);
-        self.loadAttempts = 0;
-        self.allSourcesFailed = false;
-      });
-    },
-
-    tryNextSource() {
-      if (!this.audio) return;
-      this.loadAttempts++;
-      if (this.loadAttempts > this.maxLoadAttempts) {
-        this.currentSourceIndex++;
-        this.loadAttempts = 0;
-      }
-      if (this.currentSourceIndex >= this.sources.length) {
-        if (!this.allSourcesFailed) {
-          this.allSourcesFailed = true;
-          console.error("All audio sources failed");
-          state.soundOn = false;
-          syncSoundUI();
-        }
+    _next() {
+      if (!this.audio || this.failed) return;
+      this.index++;
+      if (this.index >= this.sources.length) {
+        this.failed = true;
+        console.warn("All audio sources failed");
+        syncSoundUI();
         return;
       }
-      console.log("Trying fallback:", this.sources[this.currentSourceIndex]);
-      this.audio.src = this.sources[this.currentSourceIndex];
+      this.audio.src = this.sources[this.index];
       this.audio.load();
+      if (this.wantPlaying) this.audio.play().catch(() => {});
+    },
+
+    get isPlaying() {
+      return !!this.audio && !this.audio.paused;
     },
 
     play() {
-      if (!this.audio || this.allSourcesFailed) {
+      if (!this.audio || this.failed) {
         return Promise.reject(new Error("Audio not available"));
       }
+      this.wantPlaying = true;
       return this.audio.play();
     },
     pause() {
+      this.wantPlaying = false;
       if (this.audio) this.audio.pause();
     },
     setVolume(volume) {
@@ -578,7 +778,7 @@
   };
 
   // =====================================================================
-  // PART 6 — RESOURCE MANAGER
+  // PART 6 — RESOURCE MANAGER (blob URLs from uploads)
   // =====================================================================
   const ResourceManager = {
     blobUrls: new Set(),
@@ -588,15 +788,18 @@
       this.blobUrls.add(url);
       return url;
     },
-    revokeAllBlobUrls() {
-      if (this.blobUrls.size === 0) return;
+    /** Free every uploaded file except the one currently displayed. */
+    releaseExcept(keepUrl) {
+      this.blobUrls.forEach((url) => {
+        if (url !== keepUrl) {
+          URL.revokeObjectURL(url);
+          this.blobUrls.delete(url);
+        }
+      });
+    },
+    revokeAll() {
       this.blobUrls.forEach((url) => URL.revokeObjectURL(url));
       this.blobUrls.clear();
-    },
-    cleanup() {
-      this.revokeAllBlobUrls();
-      destroyRainyGlass();
-      console.log("[WeatherCloud] Resources cleaned up");
     }
   };
 
@@ -604,17 +807,13 @@
   // PART 7 — LOADING CONTROLLER
   // =====================================================================
   const LoadingController = {
-    currentLoadId: null,
+    currentLoadId: 0,
     startLoading() {
-      const loadId = Date.now() + "-" + Math.random().toString(36).slice(2, 11);
-      this.currentLoadId = loadId;
-      return loadId;
+      this.currentLoadId++;
+      return this.currentLoadId;
     },
     isCurrentLoading(id) {
       return this.currentLoadId === id;
-    },
-    cancelAll() {
-      this.currentLoadId = null;
     }
   };
 
@@ -632,35 +831,31 @@
     },
 
     registerServiceWorker() {
-      const hostname = window.location.hostname;
-      if (hostname.includes("cdpn.io") || hostname.includes("codepen.io")) {
-        console.log("PWA: Service Worker skipped on CodePen");
+      const { hostname, protocol } = window.location;
+      if (protocol === "file:" || hostname.includes("cdpn.io") || hostname.includes("codepen.io")) {
         return;
       }
       if ("serviceWorker" in navigator) {
         window.addEventListener("load", () => {
           navigator.serviceWorker
             .register("./sw.js")
-            .then((reg) => console.log("SW registered:", reg.scope))
             .catch((err) => console.warn("SW registration failed:", err));
         });
       }
     },
 
     setupInstallPrompt() {
-      const self = this;
       window.addEventListener("beforeinstallprompt", (e) => {
         e.preventDefault();
-        self.deferredPrompt = e;
-        if (self.installButton) self.installButton.classList.remove("hidden");
-        console.log("PWA installable");
+        this.deferredPrompt = e;
+        if (this.installButton) this.installButton.classList.remove("hidden");
       });
       if (this.installButton) {
-        this.installButton.addEventListener("click", () => self.promptInstall());
+        this.installButton.addEventListener("click", () => this.promptInstall());
       }
       window.addEventListener("appinstalled", () => {
-        self.deferredPrompt = null;
-        if (self.installButton) self.installButton.classList.add("hidden");
+        this.deferredPrompt = null;
+        if (this.installButton) this.installButton.classList.add("hidden");
         showToast("App installed!", "success");
       });
     },
@@ -671,8 +866,7 @@
         return;
       }
       this.deferredPrompt.prompt();
-      const { outcome } = await this.deferredPrompt.userChoice;
-      console.log("Install outcome:", outcome);
+      await this.deferredPrompt.userChoice.catch(() => {});
       this.deferredPrompt = null;
     }
   };
@@ -681,42 +875,12 @@
   // PART 9 — CONFIG & PRESETS (CORS-friendly sources)
   // =====================================================================
   const PRESETS = [
-    {
-      type: "image",
-      label: "City",
-      url: "https://picsum.photos/id/1015/1920/1080",
-      thumb: "https://picsum.photos/id/1015/300/200"
-    },
-    {
-      type: "image",
-      label: "Forest",
-      url: "https://picsum.photos/id/1018/1920/1080",
-      thumb: "https://picsum.photos/id/1018/300/200"
-    },
-    {
-      type: "image",
-      label: "Mountain",
-      url: "https://picsum.photos/id/1016/1920/1080",
-      thumb: "https://picsum.photos/id/1016/300/200"
-    },
-    {
-      type: "image",
-      label: "Towers",
-      url: "https://picsum.photos/id/1031/1920/1080",
-      thumb: "https://picsum.photos/id/1031/300/200"
-    },
-    {
-      type: "image",
-      label: "Future",
-      url: "https://picsum.photos/id/1041/1920/1080",
-      thumb: "https://picsum.photos/id/1041/300/200"
-    },
-    {
-      type: "image",
-      label: "Sky",
-      url: "https://picsum.photos/id/1019/1920/1080",
-      thumb: "https://picsum.photos/id/1019/300/200"
-    },
+    { type: "image", label: "City", url: "https://picsum.photos/id/1015/1920/1080", thumb: "https://picsum.photos/id/1015/300/200" },
+    { type: "image", label: "Forest", url: "https://picsum.photos/id/1018/1920/1080", thumb: "https://picsum.photos/id/1018/300/200" },
+    { type: "image", label: "Mountain", url: "https://picsum.photos/id/1016/1920/1080", thumb: "https://picsum.photos/id/1016/300/200" },
+    { type: "image", label: "Towers", url: "https://picsum.photos/id/1031/1920/1080", thumb: "https://picsum.photos/id/1031/300/200" },
+    { type: "image", label: "Future", url: "https://picsum.photos/id/1041/1920/1080", thumb: "https://picsum.photos/id/1041/300/200" },
+    { type: "image", label: "Sky", url: "https://picsum.photos/id/1019/1920/1080", thumb: "https://picsum.photos/id/1019/300/200" },
     {
       type: "video",
       label: "Hurricane",
@@ -737,6 +901,8 @@
     }
   ];
 
+  const OVERLAY_COLORS = ["none", "#3b82f6", "#8b5cf6", "#ef4444", "#10b981", "#f59e0b"];
+
   const DEFAULT_STATE = {
     blur: 5,
     brightness: 30,
@@ -750,26 +916,33 @@
     currentPresetIndex: 0
   };
 
-  let state = new Proxy(
+  const VISUAL_PROPS = ["blur", "brightness", "rain", "overlayColor", "overlayOpacity"];
+
+  const state = new Proxy(
     { ...DEFAULT_STATE },
     {
       set(target, property, value) {
-        const oldValue = target[property];
-        if (property === "blur") {
-          value = Math.min(value, DeviceInfo.getMaxBlur());
-        }
+        if (property === "blur") value = Math.min(value, DeviceInfo.getMaxBlur());
+        const changed = target[property] !== value;
         target[property] = value;
-        if (oldValue !== value) {
-          const visualProps = ["blur", "brightness", "rain", "overlayColor", "overlayOpacity"];
-          if (visualProps.includes(property)) updateFilters();
-        }
+        if (changed && VISUAL_PROPS.includes(property)) updateFilters();
         return true;
-      },
-      get(target, property) {
-        return target[property];
       }
     }
   );
+
+  function isValidOverlayColor(c) {
+    return c === "none" || /^#[0-9a-f]{6}$/i.test(c || "");
+  }
+
+  /** Rain slider (0–100) → drop spawn rate and density. 0 = no rain. */
+  function rainOptions(rain) {
+    const k = Math.max(0, Math.min(100, rain)) / 100;
+    return {
+      dropletsRate: k === 0 ? 0 : 3 + k * 22,
+      maxDroplets: Math.round(k * MAX_DROPLETS)
+    };
+  }
 
   // =====================================================================
   // PART 10 — DOM ELEMENTS
@@ -788,38 +961,46 @@
   const settingsBtn = $id("btn-settings");
 
   // =====================================================================
-  // PART 11 — HELPERS
+  // PART 11 — HELPERS (toast, loader, filters)
   // =====================================================================
+  let toastTimer = null;
   function showToast(message, type = "info") {
-    if (!toast) {
-      console.log("[Toast]", message);
-      return;
-    }
+    if (!toast) return;
+    clearTimeout(toastTimer);
     toast.textContent = message;
     toast.className = "toast show";
     if (type === "error") toast.classList.add("error");
     if (type === "success") toast.classList.add("success");
-    setTimeout(() => toast.classList.remove("show", "error", "success"), 2500);
+    toastTimer = setTimeout(() => toast.classList.remove("show", "error", "success"), 2600);
   }
 
-  function showLoader(text = "Loading...") {
+  let loaderTimer = null;
+  function showLoader(text = "Loading...", delay = 0) {
     if (!loadingOverlay) return;
-    const textEl = loadingOverlay.querySelector(".loader-text");
-    if (textEl) textEl.textContent = text;
-    loadingOverlay.classList.add("active");
+    clearTimeout(loaderTimer);
+    const run = () => {
+      const textEl = loadingOverlay.querySelector(".loader-text");
+      if (textEl) textEl.textContent = text;
+      loadingOverlay.classList.add("active");
+    };
+    if (delay) loaderTimer = setTimeout(run, delay);
+    else run();
   }
 
   function hideLoader() {
-    if (!loadingOverlay) return;
-    loadingOverlay.classList.remove("active");
+    clearTimeout(loaderTimer);
+    if (loadingOverlay) loadingOverlay.classList.remove("active");
   }
 
-  const updateFilters = throttle(function () {
+  const updateFilters = rafBatch(function () {
     if (!customBg || !customVideo || !canvas || !colorOverlay) return;
-    const filter = `blur(${state.blur}px) brightness(${state.brightness / 100})`;
+    const brightness = `brightness(${state.brightness / 100})`;
+    const filter = `blur(${state.blur}px) ${brightness}`;
     customBg.style.filter = filter;
     customVideo.style.filter = filter;
-    canvas.style.opacity = state.rain / 100;
+    canvas.style.filter = brightness; // drops match the dimmed background
+
+    if (rainyGlassInstance) rainyGlassInstance.setOptions(rainOptions(state.rain));
 
     if (state.overlayColor !== "none" && state.overlayOpacity > 0) {
       colorOverlay.style.backgroundColor = state.overlayColor;
@@ -827,101 +1008,58 @@
     } else {
       colorOverlay.style.opacity = 0;
     }
-  }, 16);
+  });
 
   // =====================================================================
   // PART 12 — RAINYGLASS INTEGRATION
   // =====================================================================
   let rainyGlassInstance = null;
 
-  function initRainyGlass() {
-    if (!canvas || !customBg) return null;
-    if (rainyGlassInstance && !rainyGlassInstance.isDestroyed) {
+  function ensureRain() {
+    if (rainyGlassInstance && !rainyGlassInstance.isDestroyed) return rainyGlassInstance;
+    if (!canvas) return null;
+    try {
+      rainyGlassInstance = new RainyGlass(canvas, {
+        ...rainOptions(state.rain),
+        reducedMotion: reducedMotionQuery.matches
+      });
+    } catch (err) {
+      console.warn("[WeatherCloud] RainyGlass init error:", err.message);
+      return null;
+    }
+    if (!rainyGlassInstance.isReady) {
+      canvas.hidden = true;
       return rainyGlassInstance;
     }
-
-    const bgSrc = customBg.currentSrc || customBg.src;
-    if (!bgSrc) {
-      console.warn("[WeatherCloud] No background source");
-      return null;
-    }
-
-    try {
-      if (!rainyGlassInstance) {
-        rainyGlassInstance = new RainyGlass(canvas, {
-          dropletsRate: 40,
-          maxDroplets: 110,
-          minRadius: 8,
-          maxRadius: 36,
-          fallSpeed: 0.16,
-          refraction: 1.4,
-          blurStrength: 0.85,
-          highlight: 0.32
-        });
-      }
-      return rainyGlassInstance
-        .loadBackground(bgSrc)
-        .then(() => {
-          rainyGlassInstance.start();
-          console.log(
-            "%c✓ RainyGlass started",
-            "color:#6cf;font-weight:bold",
-            "| Weather Cloud by SAIF G.M.D"
-          );
-          return rainyGlassInstance;
-        })
-        .catch((err) => {
-          console.warn("[WeatherCloud] RainyGlass load failed:", err.message);
-          return null;
-        });
-    } catch (err) {
-      console.error("[WeatherCloud] RainyGlass init error:", err.message);
-      return null;
-    }
+    rainyGlassInstance.start();
+    return rainyGlassInstance;
   }
 
-  function reloadRainyGlassBackground() {
-    if (!rainyGlassInstance || rainyGlassInstance.isDestroyed) {
-      return initRainyGlass();
-    }
-    const bgSrc = customBg && (customBg.currentSrc || customBg.src);
-    if (!bgSrc) return Promise.resolve(null);
-
-    return rainyGlassInstance
-      .loadBackground(bgSrc)
-      .then(() => {
-        if (!rainyGlassInstance.isRunning) rainyGlassInstance.start();
-        return rainyGlassInstance;
-      })
-      .catch((err) => {
-        console.warn("[WeatherCloud] BG reload failed:", err.message);
-        return null;
-      });
-  }
-
-  function destroyRainyGlass() {
-    if (rainyGlassInstance) {
-      rainyGlassInstance.destroy();
-      rainyGlassInstance = null;
-    }
+  function attachRainSource(el) {
+    const rain = ensureRain();
+    if (rain) rain.setSource(el);
   }
 
   // =====================================================================
   // PART 13 — BACKGROUND SWITCHER
   // =====================================================================
-  function setBackground(url, type = "image", presetIndex = -1) {
-    LoadingController.cancelAll();
+  function markActivePreset(index) {
+    document.querySelectorAll(".preset-item").forEach((el, i) => {
+      const active = i === index;
+      el.classList.toggle("active", active);
+      el.setAttribute("aria-pressed", String(active));
+    });
+  }
+
+  function setBackground(url, type = "image", presetIndex = -1, opts = {}) {
     const loadId = LoadingController.startLoading();
+    const isCurrent = () => LoadingController.isCurrentLoading(loadId);
 
     state.currentType = type;
     state.currentUrl = url;
     state.currentPresetIndex = presetIndex;
-
-    if (presetIndex === -1) {
-      document
-        .querySelectorAll(".preset-item")
-        .forEach((el) => el.classList.remove("active"));
-    }
+    markActivePreset(presetIndex);
+    ResourceManager.releaseExcept(url);
 
     if (type === "video") {
       showLoader("Loading video...");
@@ -931,180 +1069,211 @@
       customVideo.muted = true;
       customVideo.loop = true;
       customVideo.playsInline = true;
-      customVideo.setAttribute("playsinline", "");
       customVideo.pause();
-      customVideo.removeAttribute("src");
-      customVideo.load();
       customVideo.src = url;
 
       const playVideo = () => {
-        if (!LoadingController.isCurrentLoading(loadId)) return;
+        if (!isCurrent()) return;
         const promise = customVideo.play();
-        if (promise !== undefined) {
-          promise
-            .then(() => {
-              if (!LoadingController.isCurrentLoading(loadId)) {
-                customVideo.pause();
-                return;
-              }
-              hideLoader();
-            })
-            .catch((error) => {
-              if (!LoadingController.isCurrentLoading(loadId)) return;
-              hideLoader();
-              if (error.name === "NotAllowedError") {
-                showToast("Tap to start video", "info");
-                const startVideo = () => {
-                  customVideo.play().catch(() => {});
-                  document.removeEventListener("click", startVideo);
-                };
-                document.addEventListener("click", startVideo, { once: true });
-              } else {
-                showToast("Video could not play", "error");
-              }
-            });
-        }
-      };
-
-      const canPlayHandler = () => {
-        if (LoadingController.isCurrentLoading(loadId)) playVideo();
+        if (!promise) return;
+        promise
+          .then(() => {
+            if (!isCurrent()) return;
+            hideLoader();
+            attachRainSource(customVideo);
+          })
+          .catch((error) => {
+            if (!isCurrent()) return;
+            hideLoader();
+            attachRainSource(customVideo);
+            if (error.name === "NotAllowedError") {
+              showToast("Tap to start video", "info");
+              document.addEventListener("click", () => customVideo.play().catch(() => {}), { once: true });
+            } else if (error.name !== "AbortError") {
+              showToast("Video could not play", "error");
+            }
+          });
       };
 
       if (customVideo.readyState >= 3) playVideo();
-      else customVideo.addEventListener("canplay", canPlayHandler, { once: true });
+      else customVideo.addEventListener("canplay", playVideo, { once: true });
     } else {
       showLoader("Loading image...");
       customVideo.pause();
+      customVideo.removeAttribute("src");
+      customVideo.load(); // release the previous video
       customVideo.classList.add("hidden");
       customBg.classList.remove("hidden");
 
-      const imgLoadHandler = () => {
-        if (!LoadingController.isCurrentLoading(loadId)) return;
+      const isBlob = url.startsWith("blob:");
+      let handled = false;
+
+      const onLoad = () => {
+        if (!isCurrent() || handled) return;
+        handled = true;
         hideLoader();
-        setTimeout(() => reloadRainyGlassBackground(), 150);
+        attachRainSource(customBg);
       };
 
-      const imgErrorHandler = () => {
-        if (!LoadingController.isCurrentLoading(loadId)) return;
+      const onError = () => {
+        if (!isCurrent() || handled) return;
+        handled = true;
+        // Many hosts don't send CORS headers: retry without CORS.
+        // The image will show, but the drops use "plain glass" mode.
+        if (!opts.noCors && !isBlob) {
+          setBackground(url, type, presetIndex, { noCors: true });
+          return;
+        }
         hideLoader();
         showToast("Image could not be loaded", "error");
-        if (state.currentPresetIndex !== 0) {
+        if (presetIndex !== 0) {
           setBackground(PRESETS[0].url, PRESETS[0].type, 0);
-          const first = document.querySelectorAll(".preset-item")[0];
-          if (first) first.classList.add("active");
+        } else {
+          customBg.classList.add("hidden"); // offline: keep the dark backdrop
+          attachRainSource(null);
         }
       };
 
-      customBg.onload = imgLoadHandler;
-      customBg.onerror = imgErrorHandler;
+      customBg.onload = onLoad;
+      customBg.onerror = onError;
+      if (opts.noCors || isBlob) customBg.removeAttribute("crossorigin");
+      else customBg.crossOrigin = "anonymous";
       customBg.src = url;
-      if (customBg.complete) imgLoadHandler();
+      if (customBg.complete && customBg.naturalWidth) onLoad();
     }
 
     updateFilters();
   }
 
   // =====================================================================
-  // PART 14 — MEDIA ERROR HANDLERS
+  // PART 14 — MEDIA EVENT HANDLERS
   // =====================================================================
-  function setupMediaErrorHandlers() {
+  function setupMediaHandlers() {
     if (!customVideo) return;
-    customVideo.onerror = () => {
+    customVideo.addEventListener("error", () => {
+      if (state.currentType !== "video" || !customVideo.getAttribute("src")) return;
       hideLoader();
       showToast("Video could not be loaded", "error");
-      if (state.currentPresetIndex !== 0) {
-        setBackground(PRESETS[0].url, PRESETS[0].type, 0);
-      }
-    };
-    customVideo.addEventListener("waiting", () => showLoader("Buffering..."));
-    customVideo.addEventListener("playing", () => hideLoader());
-    customVideo.addEventListener("canplay", () => hideLoader());
+      if (state.currentPresetIndex !== 0) setBackground(PRESETS[0].url, PRESETS[0].type, 0);
+    });
+    // Only show the overlay if buffering lasts a while
+    customVideo.addEventListener("waiting", () => {
+      if (state.currentType === "video") showLoader("Buffering...", 800);
+    });
+    customVideo.addEventListener("playing", hideLoader);
   }
 
   // =====================================================================
-  // PART 15 — SOUND UI
+  // PART 15 — SOUND
   // =====================================================================
   function syncSoundUI() {
-    const isOn = state.soundOn;
+    const playing = AudioManager.isPlaying;
     if (soundBtn) {
-      soundBtn.classList.toggle("active", isOn);
-      soundBtn.setAttribute("aria-pressed", String(isOn));
+      soundBtn.classList.toggle("active", playing);
+      soundBtn.setAttribute("aria-pressed", String(playing));
+      soundBtn.title = AudioManager.failed
+        ? "Rain sound unavailable"
+        : playing
+          ? "Mute rain (S)"
+          : "Play rain sound (S)";
     }
-    if (soundToggleIcon) soundToggleIcon.textContent = isOn ? "🔊" : "🔇";
+    if (soundToggleIcon) soundToggleIcon.textContent = playing ? "🔊" : "🔇";
   }
 
   function setSound(on) {
     state.soundOn = !!on;
-    syncSoundUI();
-
-    if (state.soundOn) {
-      if (!AudioManager.audio || AudioManager.allSourcesFailed) {
-        state.soundOn = false;
-        syncSoundUI();
-        showToast("Audio not available", "info");
-        return;
-      }
-      AudioManager.setVolume(state.volume / 100);
-      AudioManager.play().catch(() => {
-        state.soundOn = false;
-        syncSoundUI();
-        showToast("Autoplay blocked — click to enable", "info");
-      });
-    } else {
+    if (!state.soundOn) {
       AudioManager.pause();
+      syncSoundUI();
+      return;
+    }
+    if (AudioManager.failed) {
+      state.soundOn = false;
+      syncSoundUI();
+      showToast("Audio not available", "info");
+      return;
+    }
+    AudioManager.setVolume(state.volume / 100);
+    AudioManager.play().catch((err) => {
+      if (err && err.name === "NotAllowedError") showToast("Tap anywhere to enable sound", "info");
+      syncSoundUI();
+    });
+  }
+
+  function setupAudioUnlock() {
+    // Browsers block autoplay until the first user gesture.
+    const unlock = (e) => {
+      const onSoundBtn = e.target && e.target.closest && e.target.closest("#btn-sound");
+      if (!onSoundBtn && state.soundOn && !AudioManager.isPlaying && !AudioManager.failed) {
+        AudioManager.setVolume(state.volume / 100);
+        AudioManager.play().catch(() => {});
+      }
+      window.removeEventListener("click", unlock, true);
+      window.removeEventListener("keydown", unlock, true);
+    };
+    window.addEventListener("click", unlock, true);
+    window.addEventListener("keydown", unlock, true);
+
+    // Try right away: allowed for installed PWAs / frequently visited sites
+    if (state.soundOn && !AudioManager.failed) {
+      AudioManager.setVolume(state.volume / 100);
+      AudioManager.play().catch(() => {});
     }
   }
 
   // =====================================================================
-  // PART 16 — LOCALSTORAGE
+  // PART 16 — LOCALSTORAGE (visual settings)
   // =====================================================================
   function saveToLocalStorage() {
-    try {
-      const saveData = {
-        blur: state.blur,
-        brightness: state.brightness,
-        rain: state.rain,
-        overlayColor: state.overlayColor,
-        overlayOpacity: state.overlayOpacity,
-        volume: state.volume,
-        soundOn: state.soundOn,
-        currentPresetIndex: state.currentPresetIndex
-      };
-      localStorage.setItem("weatherCloudSettings", JSON.stringify(saveData));
-      showToast("Settings saved", "success");
-    } catch (e) {
+    const saveData = {
+      blur: state.blur,
+      brightness: state.brightness,
+      rain: state.rain,
+      overlayColor: state.overlayColor,
+      overlayOpacity: state.overlayOpacity,
+      volume: state.volume,
+      soundOn: state.soundOn,
+      currentPresetIndex: state.currentPresetIndex,
+      // Custom web URLs can be restored; uploaded files (blob:) can't
+      customUrl: state.currentPresetIndex === -1 && isValidUrl(state.currentUrl) ? state.currentUrl : "",
+      customType: state.currentType
+    };
+    if (storeSet(LS_KEYS.settings, saveData)) {
+      const note = state.currentPresetIndex === -1 && !saveData.customUrl
+        ? "Settings saved (uploaded files aren't kept)"
+        : "Settings saved";
+      showToast(note, "success");
+    } else {
       showToast("Could not save settings", "error");
-      console.error(e);
     }
+  }
+
+  function applySavedSettings(data) {
+    if (!data || typeof data !== "object") return false;
+    state.blur = clampInt(data.blur, 0, DeviceInfo.getMaxBlur(), DEFAULT_STATE.blur);
+    state.brightness = clampInt(data.brightness, 20, 120, DEFAULT_STATE.brightness);
+    state.rain = clampInt(data.rain, 0, 100, DEFAULT_STATE.rain);
+    state.volume = clampInt(data.volume, 0, 100, DEFAULT_STATE.volume);
+    state.overlayOpacity = clampInt(data.overlayOpacity, 0, 80, 0);
+    state.overlayColor = isValidOverlayColor(data.overlayColor) ? data.overlayColor : "none";
+    state.soundOn = typeof data.soundOn === "boolean" ? data.soundOn : true;
+
+    const idx = clampInt(data.currentPresetIndex, -1, PRESETS.length - 1, 0);
+    if (idx === -1 && isValidUrl(data.customUrl)) {
+      state.currentPresetIndex = -1;
+      state.currentUrl = data.customUrl;
+      state.currentType = data.customType === "video" ? "video" : "image";
+    } else {
+      const safeIdx = idx === -1 ? 0 : idx;
+      state.currentPresetIndex = safeIdx;
+      state.currentUrl = PRESETS[safeIdx].url;
+      state.currentType = PRESETS[safeIdx].type;
+    }
+    return true;
   }
 
   function loadFromLocalStorage() {
-    try {
-      const saved = localStorage.getItem("weatherCloudSettings");
-      if (!saved) return false;
-      const data = JSON.parse(saved);
-      if (typeof data !== "object" || data === null) return false;
-
-      const maxBlur = DeviceInfo.getMaxBlur();
-      state.blur = Math.min(maxBlur, Math.max(0, parseInt(data.blur) || 5));
-      state.brightness = Math.min(120, Math.max(20, parseInt(data.brightness) || 30));
-      state.rain = Math.min(100, Math.max(20, parseInt(data.rain) || 70));
-      state.volume = Math.min(100, Math.max(0, parseInt(data.volume) || 50));
-      state.overlayOpacity = Math.min(80, Math.max(0, parseInt(data.overlayOpacity) || 0));
-      state.overlayColor = data.overlayColor || "none";
-      state.soundOn = typeof data.soundOn === "boolean" ? data.soundOn : true;
-      state.currentPresetIndex =
-        typeof data.currentPresetIndex === "number" ? data.currentPresetIndex : 0;
-
-      if (state.currentPresetIndex >= 0 && state.currentPresetIndex < PRESETS.length) {
-        state.currentUrl = PRESETS[state.currentPresetIndex].url;
-        state.currentType = PRESETS[state.currentPresetIndex].type;
-      }
-      return true;
-    } catch (e) {
-      console.warn("localStorage read error:", e);
-      return false;
-    }
+    return applySavedSettings(storeGet(LS_KEYS.settings));
   }
 
   // =====================================================================
@@ -1115,12 +1284,7 @@
       state[key] = DEFAULT_STATE[key];
     });
     applyStateToUI();
-    document.querySelectorAll(".preset-item").forEach((el, i) => {
-      el.classList.toggle("active", i === 0);
-    });
-    try {
-      localStorage.removeItem("weatherCloudSettings");
-    } catch (e) {}
+    storeRemove(LS_KEYS.settings);
     setBackground(PRESETS[0].url, PRESETS[0].type, 0);
     setSound(state.soundOn);
     showToast("Reset to defaults", "success");
@@ -1130,9 +1294,7 @@
   // PART 18 — APPLY STATE TO UI
   // =====================================================================
   function applyStateToUI() {
-    const maxBlur = DeviceInfo.getMaxBlur();
-
-    const set = (id, value) => {
+    const setVal = (id, value) => {
       const el = $id(id);
       if (el) el.value = value;
     };
@@ -1142,20 +1304,20 @@
     };
 
     const blurRange = $id("blur-range");
-    if (blurRange) blurRange.max = maxBlur;
-    set("blur-range", state.blur);
+    if (blurRange) blurRange.max = DeviceInfo.getMaxBlur();
+    setVal("blur-range", state.blur);
     setText("blur-val", state.blur + "px");
 
-    set("brightness-range", state.brightness);
+    setVal("brightness-range", state.brightness);
     setText("brightness-val", state.brightness + "%");
 
-    set("rain-range", state.rain);
+    setVal("rain-range", state.rain);
     setText("rain-val", state.rain + "%");
 
-    set("overlay-range", state.overlayOpacity);
+    setVal("overlay-range", state.overlayOpacity);
     setText("overlay-val", state.overlayOpacity + "%");
 
-    set("volume-range", state.volume);
+    setVal("volume-range", state.volume);
     setText("volume-val", state.volume + "%");
 
     document.querySelectorAll(".color-btn").forEach((btn) => {
@@ -1166,9 +1328,7 @@
 
     updateFilters();
     syncSoundUI();
-    if (AudioManager && AudioManager.setVolume) {
-      AudioManager.setVolume(state.volume / 100);
-    }
+    AudioManager.setVolume(state.volume / 100);
   }
 
   // =====================================================================
@@ -1187,62 +1347,96 @@
     }
     if (state.currentPresetIndex >= 0) {
       params.set("preset", state.currentPresetIndex);
+    } else if (isValidUrl(state.currentUrl)) {
+      params.set("bg", state.currentUrl);
+    }
+    const loc = Weather.location;
+    if (loc) {
+      params.set("lat", (+loc.lat).toFixed(4));
+      params.set("lon", (+loc.lon).toFixed(4));
+      params.set("place", loc.name);
+      if (loc.cc) params.set("cc", loc.cc);
     }
     return window.location.origin + window.location.pathname + "?" + params.toString();
   }
 
   function loadFromUrl() {
     const params = new URLSearchParams(window.location.search);
-    let hasUrlParams = false;
-    const maxBlur = DeviceInfo.getMaxBlur();
+    const result = { hasSettings: false, location: null };
 
     if (params.has("blur")) {
-      state.blur = Math.min(maxBlur, Math.max(0, parseInt(params.get("blur")) || 5));
-      hasUrlParams = true;
+      state.blur = clampInt(params.get("blur"), 0, DeviceInfo.getMaxBlur(), DEFAULT_STATE.blur);
+      result.hasSettings = true;
     }
     if (params.has("brightness")) {
-      state.brightness = Math.min(120, Math.max(20, parseInt(params.get("brightness")) || 30));
-      hasUrlParams = true;
+      state.brightness = clampInt(params.get("brightness"), 20, 120, DEFAULT_STATE.brightness);
+      result.hasSettings = true;
     }
     if (params.has("rain")) {
-      state.rain = Math.min(100, Math.max(20, parseInt(params.get("rain")) || 70));
-      hasUrlParams = true;
+      state.rain = clampInt(params.get("rain"), 0, 100, DEFAULT_STATE.rain);
+      result.hasSettings = true;
     }
     if (params.has("volume")) {
-      state.volume = Math.min(100, Math.max(0, parseInt(params.get("volume")) || 50));
-      hasUrlParams = true;
+      state.volume = clampInt(params.get("volume"), 0, 100, DEFAULT_STATE.volume);
+      result.hasSettings = true;
+    }
+    if (params.has("sound")) {
+      state.soundOn = params.get("sound") !== "0";
+      result.hasSettings = true;
     }
     if (params.has("color")) {
-      const raw = params.get("color");
-      if (raw && raw !== "none") {
-        const hex = raw.startsWith("#") ? raw : "#" + raw;
-        if (/^#([0-9A-F]{3}|[0-9A-F]{6})$/i.test(hex)) {
-          state.overlayColor = hex;
-          hasUrlParams = true;
-        }
+      const raw = params.get("color") || "";
+      const hex = raw.startsWith("#") ? raw : "#" + raw;
+      if (isValidOverlayColor(hex)) {
+        state.overlayColor = hex;
+        result.hasSettings = true;
       }
     }
     if (params.has("colorOpacity")) {
-      state.overlayOpacity = Math.min(80, Math.max(0, parseInt(params.get("colorOpacity")) || 0));
-      hasUrlParams = true;
+      state.overlayOpacity = clampInt(params.get("colorOpacity"), 0, 80, 0);
+      result.hasSettings = true;
     }
     if (params.has("preset")) {
-      const idx = parseInt(params.get("preset"));
-      if (!isNaN(idx) && idx >= 0 && idx < PRESETS.length) {
-        state.currentPresetIndex = idx;
-        state.currentUrl = PRESETS[idx].url;
-        state.currentType = PRESETS[idx].type;
+      const idx = clampInt(params.get("preset"), 0, PRESETS.length - 1, 0);
+      state.currentPresetIndex = idx;
+      state.currentUrl = PRESETS[idx].url;
+      state.currentType = PRESETS[idx].type;
+      result.hasSettings = true;
+    } else if (params.has("bg")) {
+      const bg = sanitizeUrl(params.get("bg"));
+      if (bg) {
+        state.currentPresetIndex = -1;
+        state.currentUrl = bg;
+        state.currentType = isVideoUrl(bg) ? "video" : "image";
+        result.hasSettings = true;
       }
-      hasUrlParams = true;
     }
-    return hasUrlParams;
+    if (params.has("lat") && params.has("lon")) {
+      result.location = normalizeLocation({
+        name: params.get("place") || "Shared location",
+        cc: params.get("cc") || "",
+        lat: params.get("lat"),
+        lon: params.get("lon"),
+        source: "shared"
+      });
+    }
+    return result;
   }
 
   // =====================================================================
-  // PART 20 — CLIPBOARD
+  // PART 20 — CLIPBOARD / SHARE
   // =====================================================================
+  function shareSettings() {
+    const url = generateShareUrl();
+    if (navigator.share && DeviceInfo.isMobile()) {
+      navigator.share({ title: "Weather Cloud", url }).catch(() => {});
+      return;
+    }
+    copyToClipboard(url);
+  }
+
   function copyToClipboard(text) {
-    if (navigator.clipboard) {
+    if (navigator.clipboard && window.isSecureContext) {
       navigator.clipboard
         .writeText(text)
         .then(() => showToast("Link copied!", "success"))
@@ -1269,23 +1463,30 @@
   // =====================================================================
   // PART 21 — PANEL
   // =====================================================================
+  function isPanelOpen() {
+    return !!panel && panel.classList.contains("open");
+  }
+
   function togglePanel(forceState) {
     if (!panel) return;
-    const shouldOpen =
-      typeof forceState === "boolean" ? forceState : !panel.classList.contains("open");
+    const shouldOpen = typeof forceState === "boolean" ? forceState : !isPanelOpen();
+    if (shouldOpen === isPanelOpen()) return;
 
     if (shouldOpen) {
       panel.classList.add("open");
-      panel.setAttribute("aria-hidden", "false");
+      panel.inert = false;
+      panel.removeAttribute("inert");
       if (settingsBtn) settingsBtn.setAttribute("aria-expanded", "true");
       const closeBtn = $id("panel-close");
       if (closeBtn) setTimeout(() => closeBtn.focus(), 100);
     } else {
+      const hadFocus = panel.contains(document.activeElement);
       panel.classList.remove("open");
-      panel.setAttribute("aria-hidden", "true");
+      panel.inert = true;
+      panel.setAttribute("inert", "");
       if (settingsBtn) {
         settingsBtn.setAttribute("aria-expanded", "false");
-        settingsBtn.focus();
+        if (hadFocus) settingsBtn.focus();
       }
     }
   }
@@ -1293,11 +1494,10 @@
   function setupFocusTrap() {
     if (!panel) return;
     panel.addEventListener("keydown", (e) => {
-      if (e.key !== "Tab") return;
-      if (!panel.classList.contains("open")) return;
-      const focusable = panel.querySelectorAll(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-      );
+      if (e.key !== "Tab" || !isPanelOpen()) return;
+      const focusable = Array.from(
+        panel.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
+      ).filter((el) => !el.hidden && !el.disabled && el.offsetParent !== null);
       if (!focusable.length) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
@@ -1318,38 +1518,16 @@
     if (!presetGrid) return;
     presetGrid.innerHTML = "";
     PRESETS.forEach((preset, index) => {
-      const item = document.createElement("div");
-      item.className =
-        "preset-item" +
-        (index === state.currentPresetIndex ? " active" : "") +
-        (preset.type === "video" ? " video" : "");
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "preset-item" + (preset.type === "video" ? " video" : "");
       item.dataset.label = preset.label;
-      item.dataset.index = index;
-      item.style.backgroundImage = `url(${preset.thumb})`;
-      item.setAttribute("role", "option");
-      item.setAttribute("aria-selected", String(index === state.currentPresetIndex));
-      item.setAttribute("tabindex", "0");
-      item.setAttribute("aria-label", `${preset.label} ${preset.type}`);
-
-      const selectPreset = () => {
-        document.querySelectorAll(".preset-item").forEach((el) => {
-          el.classList.remove("active");
-          el.setAttribute("aria-selected", "false");
-        });
-        item.classList.add("active");
-        item.setAttribute("aria-selected", "true");
-        setBackground(preset.url, preset.type, index);
-      };
-
-      item.addEventListener("click", selectPreset);
-      item.addEventListener("keydown", (e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault();
-          selectPreset();
-        }
-      });
+      item.style.backgroundImage = `url("${preset.thumb}")`;
+      item.setAttribute("aria-label", `${preset.label} (${preset.type})`);
+      item.addEventListener("click", () => setBackground(preset.url, preset.type, index));
       presetGrid.appendChild(item);
     });
+    markActivePreset(state.currentPresetIndex);
   }
 
   // =====================================================================
@@ -1363,26 +1541,20 @@
     slider.addEventListener("input", (e) => {
       state[stateKey] = parseInt(e.target.value, 10) || 0;
       display.textContent = state[stateKey] + suffix;
-      updateFilters();
-
-      if (stateKey === "rain" && rainyGlassInstance) {
-        const rate = 20 + (state.rain / 100) * 60;
-        rainyGlassInstance.setOptions({ dropletsRate: rate });
-      }
     });
   }
 
   // =====================================================================
-  // PART 24 — CLOCK
+  // PART 24 — CLOCK (device time)
   // =====================================================================
   const Clock = {
     elTime: $id("time-display"),
     elSeconds: $id("time-seconds"),
+    elAmPm: $id("time-ampm"),
     elDate: $id("date-display"),
     elDay: $id("day-display"),
     elPhaseIcon: $id("day-phase-icon"),
     elPhaseText: $id("day-phase-text"),
-    elWeatherTime: $id("weather-time"),
     timerId: null,
 
     start() {
@@ -1397,28 +1569,18 @@
     tick() {
       const now = new Date();
       const h24 = now.getHours();
-      const h12 = h24 % 12 || 12;
-      const hh = String(h12).padStart(2, "0");
+      const hh = String(h24 % 12 || 12).padStart(2, "0");
       const mm = String(now.getMinutes()).padStart(2, "0");
       const ss = String(now.getSeconds()).padStart(2, "0");
 
       if (this.elTime) this.elTime.textContent = `${hh}:${mm}`;
       if (this.elSeconds) this.elSeconds.textContent = ss;
+      if (this.elAmPm) this.elAmPm.textContent = h24 >= 12 ? "PM" : "AM";
 
-      const day = now.getDate();
       const month = now.toLocaleString("en-US", { month: "short" });
-      const year = now.getFullYear();
-      if (this.elDate) this.elDate.textContent = `${day} ${month} ${year}`;
-
+      if (this.elDate) this.elDate.textContent = `${now.getDate()} ${month} ${now.getFullYear()}`;
       if (this.elDay) {
-        this.elDay.textContent = now
-          .toLocaleString("en-US", { weekday: "long" })
-          .toUpperCase();
-      }
-
-      if (this.elWeatherTime) {
-        const ampm = h24 >= 12 ? "PM" : "AM";
-        this.elWeatherTime.textContent = `${hh}:${mm} ${ampm}`;
+        this.elDay.textContent = now.toLocaleString("en-US", { weekday: "long" }).toUpperCase();
       }
 
       let icon = "🌙";
@@ -1438,268 +1600,1100 @@
       }
       if (this.elPhaseIcon) this.elPhaseIcon.textContent = icon;
       if (this.elPhaseText) this.elPhaseText.textContent = text;
+
+      Weather.tick();
     }
   };
 
-    // =====================================================================
-  // PART 25 — WEATHER (with Reverse Geocoding)
   // =====================================================================
-  const Weather = {
-    elLocation: $id("weather-location"),
-    elTemp: $id("weather-temp"),
-    elIcon: $id("weather-icon"),
-    elDesc: $id("weather-desc"),
-    elHumidity: $id("weather-humidity"),
-    elWind: $id("weather-wind"),
-    elFeels: $id("weather-feels"),
-    elForecast: $id("weather-forecast"),
-    elUpdated: $id("weather-updated"),
+  // PART 25 — LOCATIONS (normalize, recent searches, geocoding)
+  // =====================================================================
+  const DEFAULT_LOCATION = {
+    name: "Jeddah",
+    sub: "Makkah Region, Saudi Arabia",
+    cc: "SA",
+    lat: 21.4858,
+    lon: 39.1925,
+    source: "default"
+  };
 
-    defaultCoords: { lat: 21.4858, lon: 39.1925, name: "Jeddah, SA" },
+  function cleanText(v, max = 80) {
+    return typeof v === "string" ? v.trim().slice(0, max) : "";
+  }
 
-    init() {
-      // 1. حمّل المدينة الافتراضية أولًا (Jeddah)
-      this.fetch(
-        this.defaultCoords.lat,
-        this.defaultCoords.lon,
-        this.defaultCoords.name
-      );
+  function normalizeLocation(o) {
+    if (!o || typeof o !== "object") return null;
+    const lat = parseFloat(o.lat);
+    const lon = parseFloat(o.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180) {
+      return null;
+    }
+    const cc = cleanText(o.cc, 2).toUpperCase();
+    return {
+      name: cleanText(o.name) || "Unknown place",
+      sub: cleanText(o.sub, 160),
+      cc: /^[A-Z]{2}$/.test(cc) ? cc : "",
+      lat: +lat.toFixed(4),
+      lon: +lon.toFixed(4),
+      source: cleanText(o.source, 12) || "search"
+    };
+  }
 
-      // 2. اطلب الموقع الحقيقي من المتصفح
-      if ("geolocation" in navigator) {
-        navigator.geolocation.getCurrentPosition(
-          async (pos) => {
-            const lat = pos.coords.latitude;
-            const lon = pos.coords.longitude;
+  function locationKey(loc) {
+    return `${(+loc.lat).toFixed(2)},${(+loc.lon).toFixed(2)}`;
+  }
 
-            // ابحث عن اسم المدينة من الإحداثيات
-            const cityName = await this.reverseGeocode(lat, lon);
+  function locationLabel(loc) {
+    return loc.cc ? `${loc.name}, ${loc.cc}` : loc.name;
+  }
 
-            // ثم اجلب الطقس
-            this.fetch(lat, lon, cityName);
-          },
-          (err) => {
-            console.log("Geolocation denied or failed:", err.message);
-            // لا شيء — تبقى بيانات Jeddah
-          },
-          { timeout: 7000, maximumAge: 600000 }
-        );
-      }
+  function uniqueParts(parts, exclude) {
+    const seen = new Set([String(exclude || "").toLowerCase()]);
+    return parts.filter((p) => {
+      const k = String(p || "").trim().toLowerCase();
+      if (!k || seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }
+
+  const Recents = {
+    max: 5,
+    list() {
+      const raw = storeGet(LS_KEYS.recents, []);
+      return Array.isArray(raw) ? raw.map(normalizeLocation).filter(Boolean).slice(0, this.max) : [];
+    },
+    add(loc) {
+      const key = locationKey(loc);
+      const list = this.list().filter((l) => locationKey(l) !== key);
+      list.unshift({ ...loc, source: "search" });
+      storeSet(LS_KEYS.recents, list.slice(0, this.max));
+    },
+    clear() {
+      storeRemove(LS_KEYS.recents);
+    }
+  };
+
+  const Geo = {
+    /** Open-Meteo geocoding (GeoNames): fast, made for autocomplete. */
+    async search(query, signal) {
+      const url =
+        "https://geocoding-api.open-meteo.com/v1/search" +
+        `?name=${encodeURIComponent(query)}&count=10&language=${LANG}&format=json`;
+      const res = await fetch(url, { signal });
+      if (!res.ok) throw new Error("Search failed (" + res.status + ")");
+      const data = await res.json();
+      return (data.results || [])
+        .map((r) =>
+          normalizeLocation({
+            name: r.name,
+            sub: uniqueParts([r.admin2, r.admin1, r.country], r.name).join(", "),
+            cc: r.country_code,
+            lat: r.latitude,
+            lon: r.longitude,
+            source: "search"
+          })
+        )
+        .filter(Boolean);
     },
 
-    // Reverse Geocoding — تحويل الإحداثيات إلى اسم مدينة
-    async reverseGeocode(lat, lon) {
+    /** OpenStreetMap Nominatim: covers small villages. Max 1 request/second,
+     *  only on explicit user action (no autocomplete) per its usage policy. */
+    lastExtended: 0,
+    async searchExtended(query, signal) {
+      const wait = 1100 - (Date.now() - this.lastExtended);
+      if (wait > 0) await sleep(wait);
+      this.lastExtended = Date.now();
+      const url =
+        "https://nominatim.openstreetmap.org/search" +
+        `?q=${encodeURIComponent(query)}&format=jsonv2&limit=10&addressdetails=1&accept-language=${LANG}`;
+      const res = await fetch(url, { signal });
+      if (!res.ok) throw new Error("Search failed (" + res.status + ")");
+      const data = await res.json();
+      return (Array.isArray(data) ? data : [])
+        .map((r) => {
+          const a = r.address || {};
+          const name =
+            r.name || a.village || a.town || a.city || a.hamlet || (r.display_name || "").split(",")[0];
+          return normalizeLocation({
+            name,
+            sub: uniqueParts(
+              [a.county || a.state_district || a.city, a.state || a.region, a.country],
+              name
+            ).join(", "),
+            cc: a.country_code,
+            lat: r.lat,
+            lon: r.lon,
+            source: "search"
+          });
+        })
+        .filter(Boolean);
+    },
+
+    /** Coordinates → place name (BigDataCloud, free, no key). */
+    async reverse(lat, lon) {
       try {
-        // BigDataCloud — مجاني بدون مفتاح
         const res = await fetch(
-          `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=en`
+          `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=${LANG}`
         );
-
         if (!res.ok) throw new Error("Reverse geocode failed");
-
-        const data = await res.json();
-
-        // حاول استخراج اسم المدينة + الدولة
-        const city =
-          data.city ||
-          data.locality ||
-          data.principalSubdivision ||
-          data.localityInfo?.administrative?.[2]?.name ||
-          null;
-
-        const countryCode = data.countryCode || "";
-        const country = data.countryName || "";
-
-        if (city && countryCode) {
-          return `${city}, ${countryCode}`;
-        } else if (city) {
-          return city;
-        } else if (country) {
-          return country;
-        } else {
-          return "My Location";
-        }
+        const d = await res.json();
+        const name = d.city || d.locality || d.principalSubdivision || d.countryName || "My Location";
+        return {
+          name,
+          sub: uniqueParts([d.principalSubdivision, d.countryName], name).join(", "),
+          cc: d.countryCode || ""
+        };
       } catch (err) {
         console.warn("Reverse geocoding failed:", err.message);
-        return "My Location";
+        return { name: "My Location", sub: "", cc: "" };
       }
     },
 
-    async fetch(lat, lon, name) {
-      try {
-        const url =
-          `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}` +
-          `&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m` +
-          `&hourly=temperature_2m,weather_code` +
-          `&timezone=auto&forecast_days=1`;
-
-        const res = await fetch(url);
-        if (!res.ok) throw new Error("Weather fetch failed");
-        const data = await res.json();
-        this.render(data.current, data.hourly, name);
-      } catch (err) {
-        console.warn("Weather error:", err.message);
-        if (this.elDesc) this.elDesc.textContent = "Weather unavailable";
-      }
-    },
-
-    render(cur, hourly, name) {
-      const code = cur.weather_code;
-      const info = this.decode(code);
-
-      if (this.elLocation) this.elLocation.textContent = name;
-      if (this.elTemp) this.elTemp.textContent = Math.round(cur.temperature_2m);
-      if (this.elIcon) this.elIcon.textContent = info.icon;
-      if (this.elDesc) this.elDesc.textContent = info.desc;
-      if (this.elHumidity)
-        this.elHumidity.textContent = cur.relative_humidity_2m + "%";
-      if (this.elWind)
-        this.elWind.textContent = Math.round(cur.wind_speed_10m) + " km/h";
-      if (this.elFeels)
-        this.elFeels.textContent = Math.round(cur.apparent_temperature) + "°";
-
-      if (this.elUpdated) {
-        const now = new Date();
-        const hh = String(now.getHours() % 12 || 12).padStart(2, "0");
-        const mm = String(now.getMinutes()).padStart(2, "0");
-        const ampm = now.getHours() >= 12 ? "PM" : "AM";
-        this.elUpdated.textContent = `${hh}:${mm} ${ampm}`;
-      }
-
-      this.renderForecast(hourly);
-    },
-
-    renderForecast(hourly) {
-      if (!this.elForecast || !hourly) return;
-
-      const now = new Date();
-      const currentHour = now.getHours();
-      const tempArr = hourly.temperature_2m || [];
-      const codeArr = hourly.weather_code || [];
-
-      let startIdx = 0;
-      for (let i = 0; i < tempArr.length; i++) {
-        const hour = new Date(hourly.time[i]).getHours();
-        if (hour === currentHour) {
-          startIdx = i;
-          break;
+    current() {
+      return new Promise((resolve, reject) => {
+        if (!("geolocation" in navigator)) {
+          reject({ code: 0, message: "Geolocation not supported" });
+          return;
         }
-      }
-
-      const boxes = [];
-      for (let offset = 0; offset < 3; offset++) {
-        const idx = startIdx + offset;
-        if (idx >= tempArr.length) break;
-
-        const temp = Math.round(tempArr[idx]);
-        const c = codeArr[idx];
-        const icon = this.decode(c).icon;
-        const label =
-          offset === 0
-            ? "Now"
-            : `${String((currentHour + offset) % 24).padStart(2, "0")}:00`;
-        const isNow = offset === 0;
-
-        boxes.push(`
-          <div class="forecast-box ${isNow ? "now" : ""}">
-            <div class="forecast-time">${label}</div>
-            <div class="forecast-icon">${icon}</div>
-            <div class="forecast-temp">${temp}°</div>
-          </div>
-        `);
-      }
-
-      this.elForecast.innerHTML = boxes.join("");
-    },
-
-    decode(code) {
-      const map = {
-        0: { icon: "☀️", desc: "Clear sky" },
-        1: { icon: "🌤️", desc: "Mainly clear" },
-        2: { icon: "⛅", desc: "Partly cloudy" },
-        3: { icon: "☁️", desc: "Overcast" },
-        45: { icon: "🌫️", desc: "Fog" },
-        48: { icon: "🌫️", desc: "Rime fog" },
-        51: { icon: "🌦️", desc: "Light drizzle" },
-        53: { icon: "🌦️", desc: "Moderate drizzle" },
-        55: { icon: "🌧️", desc: "Dense drizzle" },
-        61: { icon: "🌧️", desc: "Slight rain" },
-        63: { icon: "🌧️", desc: "Moderate rain" },
-        65: { icon: "⛈️", desc: "Heavy rain" },
-        71: { icon: "🌨️", desc: "Slight snow" },
-        73: { icon: "🌨️", desc: "Moderate snow" },
-        75: { icon: "❄️", desc: "Heavy snow" },
-        80: { icon: "🌦️", desc: "Rain showers" },
-        81: { icon: "🌧️", desc: "Heavy showers" },
-        82: { icon: "⛈️", desc: "Violent showers" },
-        95: { icon: "⛈️", desc: "Thunderstorm" },
-        96: { icon: "⛈️", desc: "Thunderstorm + hail" },
-        99: { icon: "⛈️", desc: "Severe thunderstorm" }
-      };
-      return map[code] || { icon: "🌡️", desc: "Unknown" };
+        navigator.geolocation.getCurrentPosition(
+          (pos) => resolve(pos.coords),
+          reject,
+          { timeout: 10000, maximumAge: 600000 }
+        );
+      });
     }
   };
 
   // =====================================================================
-  // PART 26 — TOUCH SUPPORT
+  // PART 26 — WEATHER (current, 24-hour strip, 5-day forecast)
+  // =====================================================================
+  const WEATHER_CODES = {
+    0: ["☀️", "🌙", "Clear sky"],
+    1: ["🌤️", "🌙", "Mainly clear"],
+    2: ["⛅", "☁️", "Partly cloudy"],
+    3: ["☁️", "☁️", "Overcast"],
+    45: ["🌫️", "🌫️", "Fog"],
+    48: ["🌫️", "🌫️", "Rime fog"],
+    51: ["🌦️", "🌧️", "Light drizzle"],
+    53: ["🌦️", "🌧️", "Moderate drizzle"],
+    55: ["🌧️", "🌧️", "Dense drizzle"],
+    56: ["🌧️", "🌧️", "Freezing drizzle"],
+    57: ["🌧️", "🌧️", "Dense freezing drizzle"],
+    61: ["🌧️", "🌧️", "Slight rain"],
+    63: ["🌧️", "🌧️", "Moderate rain"],
+    65: ["⛈️", "⛈️", "Heavy rain"],
+    66: ["🌧️", "🌧️", "Freezing rain"],
+    67: ["🌧️", "🌧️", "Heavy freezing rain"],
+    71: ["🌨️", "🌨️", "Slight snow"],
+    73: ["🌨️", "🌨️", "Moderate snow"],
+    75: ["❄️", "❄️", "Heavy snow"],
+    77: ["🌨️", "🌨️", "Snow grains"],
+    80: ["🌦️", "🌧️", "Rain showers"],
+    81: ["🌧️", "🌧️", "Heavy showers"],
+    82: ["⛈️", "⛈️", "Violent showers"],
+    85: ["🌨️", "🌨️", "Snow showers"],
+    86: ["❄️", "❄️", "Heavy snow showers"],
+    95: ["⛈️", "⛈️", "Thunderstorm"],
+    96: ["⛈️", "⛈️", "Thunderstorm + hail"],
+    99: ["⛈️", "⛈️", "Severe thunderstorm"]
+  };
+
+  function decodeWeather(code, isDay = true) {
+    const e = WEATHER_CODES[code];
+    if (!e) return { icon: "🌡️", desc: "Unknown" };
+    return { icon: isDay ? e[0] : e[1], desc: e[2] };
+  }
+
+  function uvLevel(uv) {
+    if (uv < 3) return ["Low", "uv-low"];
+    if (uv < 6) return ["Moderate", "uv-mod"];
+    if (uv < 8) return ["High", "uv-high"];
+    if (uv < 11) return ["Very high", "uv-vhigh"];
+    return ["Extreme", "uv-extreme"];
+  }
+
+  // Temperature → color for the 5-day range bars
+  const TEMP_STOPS = [
+    [-10, [110, 168, 255]],
+    [5, [90, 200, 250]],
+    [15, [110, 220, 160]],
+    [24, [255, 214, 10]],
+    [32, [255, 159, 10]],
+    [42, [255, 69, 58]]
+  ];
+
+  function tempColor(t) {
+    if (t <= TEMP_STOPS[0][0]) return `rgb(${TEMP_STOPS[0][1]})`;
+    for (let i = 1; i < TEMP_STOPS.length; i++) {
+      const [t1, c1] = TEMP_STOPS[i];
+      if (t <= t1) {
+        const [t0, c0] = TEMP_STOPS[i - 1];
+        const k = (t - t0) / (t1 - t0);
+        return `rgb(${c0.map((v, j) => Math.round(v + (c1[j] - v) * k)).join(",")})`;
+      }
+    }
+    return `rgb(${TEMP_STOPS[TEMP_STOPS.length - 1][1]})`;
+  }
+
+  function tempGradient(min, max) {
+    const stops = [0, 0.25, 0.5, 0.75, 1].map((k) => tempColor(min + (max - min) * k));
+    return `linear-gradient(90deg, ${stops.join(", ")})`;
+  }
+
+  const WEATHER_REFRESH_MS = 15 * 60 * 1000;
+
+  const Weather = {
+    els: {
+      locBtn: $id("btn-location"),
+      locName: $id("weather-location"),
+      locTime: $id("weather-time"),
+      updated: $id("weather-updated"),
+      temp: $id("weather-temp"),
+      icon: $id("weather-icon"),
+      desc: $id("weather-desc"),
+      hilo: $id("weather-hilo"),
+      humidity: $id("weather-humidity"),
+      wind: $id("weather-wind"),
+      feels: $id("weather-feels"),
+      uv: $id("weather-uv"),
+      uvBox: $id("weather-uv-box"),
+      hourlySection: $id("hourly-section"),
+      hourlyTitle: $id("hourly-title"),
+      hourlyReset: $id("hourly-reset"),
+      hourlyStrip: $id("hourly-strip"),
+      dailyList: $id("daily-list"),
+      panelLocation: $id("panel-location")
+    },
+
+    location: null,
+    data: null,
+    dataAt: 0,
+    reqId: 0,
+    controller: null,
+    selectedDay: null, // null = "next 24 hours", otherwise index into daily arrays
+    lastHourKey: "",
+
+    init(sharedLocation) {
+      const saved = normalizeLocation(storeGet(LS_KEYS.location));
+      const initial = sharedLocation || saved || DEFAULT_LOCATION;
+      this.setLocation(initial, { save: false });
+
+      // Auto-detect only when permission was already granted (no surprise prompt)
+      if (!sharedLocation && (!saved || saved.source === "gps")) this.tryAutoLocate();
+
+      setInterval(() => this.refreshIfStale(), 60 * 1000);
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) this.refreshIfStale();
+      });
+      window.addEventListener("online", () => this.refresh());
+
+      this.setupHourlyScroll();
+      if (this.els.hourlyReset) {
+        this.els.hourlyReset.addEventListener("click", () => this.selectDay(null));
+      }
+    },
+
+    async tryAutoLocate() {
+      if (!navigator.permissions || !navigator.geolocation) return;
+      try {
+        const status = await navigator.permissions.query({ name: "geolocation" });
+        if (status.state === "granted") await this.locateMe();
+      } catch {
+        /* ignore */
+      }
+    },
+
+    async locateMe() {
+      const coords = await Geo.current();
+      const place = await Geo.reverse(coords.latitude, coords.longitude);
+      const loc = normalizeLocation({ ...place, lat: coords.latitude, lon: coords.longitude, source: "gps" });
+      if (loc) this.setLocation(loc, { save: true });
+      return loc;
+    },
+
+    setLocation(loc, { save = false } = {}) {
+      const normalized = normalizeLocation(loc);
+      if (!normalized) return;
+      this.location = normalized;
+      this.selectedDay = null;
+      if (save) storeSet(LS_KEYS.location, normalized);
+      this.renderLocation();
+
+      // Instant paint from the last saved forecast for this place (works offline)
+      const cached = storeGet(LS_KEYS.weather);
+      if (cached && cached.key === locationKey(normalized) && cached.data && cached.data.current) {
+        this.render(cached.data, cached.at || 0);
+      } else {
+        this.data = null;
+        this.renderEmpty("Loading…");
+      }
+      this.refresh();
+    },
+
+    renderLocation() {
+      const loc = this.location;
+      const label = locationLabel(loc);
+      if (this.els.locName) this.els.locName.textContent = label;
+      if (this.els.locBtn) {
+        this.els.locBtn.setAttribute("aria-label", `Location: ${label}. Change location`);
+        this.els.locBtn.title = loc.sub ? `${loc.name} — ${loc.sub}` : loc.name;
+      }
+      if (this.els.panelLocation) this.els.panelLocation.textContent = label;
+    },
+
+    refreshIfStale() {
+      if (Date.now() - this.dataAt > WEATHER_REFRESH_MS) this.refresh();
+    },
+
+    async refresh() {
+      const loc = this.location;
+      if (!loc) return;
+      const id = ++this.reqId;
+      if (this.controller) this.controller.abort();
+      const controller = (this.controller = new AbortController());
+
+      const url =
+        "https://api.open-meteo.com/v1/forecast" +
+        `?latitude=${loc.lat}&longitude=${loc.lon}` +
+        "&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,is_day" +
+        "&hourly=temperature_2m,weather_code,precipitation_probability,is_day,uv_index" +
+        "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset" +
+        "&timezone=auto&forecast_days=5";
+
+      try {
+        const res = await fetch(url, { signal: controller.signal });
+        if (!res.ok) throw new Error("Weather fetch failed (" + res.status + ")");
+        const data = await res.json();
+        if (id !== this.reqId) return; // a newer request (another city) won
+        const at = Date.now();
+        storeSet(LS_KEYS.weather, { key: locationKey(loc), at, data });
+        this.render(data, at);
+      } catch (err) {
+        if (err.name === "AbortError" || id !== this.reqId) return;
+        console.warn("Weather error:", err.message);
+        if (this.data) {
+          this.setUpdated(this.dataAt, true);
+        } else {
+          this.renderEmpty("Weather unavailable");
+        }
+      }
+    },
+
+    renderEmpty(message) {
+      const e = this.els;
+      if (e.temp) e.temp.textContent = "--";
+      if (e.icon) {
+        e.icon.textContent = "☁️";
+        e.icon.classList.remove("sunny");
+      }
+      if (e.desc) e.desc.textContent = message;
+      if (e.hilo) e.hilo.textContent = "";
+      ["humidity", "wind", "feels", "uv"].forEach((k) => {
+        if (e[k]) e[k].textContent = "--";
+      });
+      if (e.hourlyStrip) e.hourlyStrip.innerHTML = "";
+      if (e.dailyList) e.dailyList.innerHTML = "";
+      if (e.updated) e.updated.textContent = "";
+    },
+
+    setUpdated(at, offline = false) {
+      if (!this.els.updated) return;
+      if (!at) {
+        this.els.updated.textContent = "";
+        return;
+      }
+      const d = new Date(at);
+      const t = formatTime12(d.getHours(), d.getMinutes());
+      this.els.updated.textContent = offline ? `Offline · ${t}` : `Updated ${t}`;
+      this.els.updated.classList.toggle("offline", offline);
+    },
+
+    /** "YYYY-MM-DDTHH:MM" for the location's current local time. */
+    cityNowIso() {
+      const off = this.data && Number.isFinite(this.data.utc_offset_seconds)
+        ? this.data.utc_offset_seconds
+        : -new Date().getTimezoneOffset() * 60;
+      return new Date(Date.now() + off * 1000).toISOString().slice(0, 16);
+    },
+
+    nowHourIndex() {
+      const h = this.data && this.data.hourly;
+      if (!h || !h.time) return -1;
+      const key = this.cityNowIso().slice(0, 13);
+      return h.time.findIndex((t) => t.slice(0, 13) === key);
+    },
+
+    todayIndex() {
+      const d = this.data && this.data.daily;
+      if (!d || !d.time) return 0;
+      const idx = d.time.indexOf(this.cityNowIso().slice(0, 10));
+      return idx === -1 ? 0 : idx;
+    },
+
+    /** Called every second by the clock. */
+    tick() {
+      if (this.els.locTime) {
+        if (this.data) {
+          const iso = this.cityNowIso();
+          this.els.locTime.textContent = formatTime12(+iso.slice(11, 13), +iso.slice(14, 16));
+        } else {
+          const now = new Date();
+          this.els.locTime.textContent = formatTime12(now.getHours(), now.getMinutes());
+        }
+      }
+      // Roll the "Now" slot / "Today" row forward as time passes
+      if (this.data) {
+        const hourKey = this.cityNowIso().slice(0, 13);
+        if (this.lastHourKey && hourKey !== this.lastHourKey) {
+          this.renderHourly();
+          this.renderDaily();
+        }
+        this.lastHourKey = hourKey;
+      }
+    },
+
+    render(data, at) {
+      if (!data || !data.current) return;
+      this.data = data;
+      this.dataAt = at || Date.now();
+      this.lastHourKey = this.cityNowIso().slice(0, 13);
+
+      const e = this.els;
+      const cur = data.current;
+      const isDay = cur.is_day !== 0;
+      const info = decodeWeather(cur.weather_code, isDay);
+
+      if (e.temp) e.temp.textContent = Math.round(cur.temperature_2m);
+      if (e.icon) {
+        e.icon.textContent = info.icon;
+        e.icon.classList.toggle("sunny", isDay && cur.weather_code <= 2);
+      }
+      if (e.desc) e.desc.textContent = info.desc;
+      if (e.humidity) e.humidity.textContent = Math.round(cur.relative_humidity_2m) + "%";
+      if (e.wind) e.wind.textContent = Math.round(cur.wind_speed_10m) + " km/h";
+      if (e.feels) e.feels.textContent = Math.round(cur.apparent_temperature) + "°";
+
+      const daily = data.daily;
+      const ti = this.todayIndex();
+      if (e.hilo && daily && daily.temperature_2m_max) {
+        e.hilo.textContent =
+          `H: ${Math.round(daily.temperature_2m_max[ti])}°   L: ${Math.round(daily.temperature_2m_min[ti])}°`;
+      }
+
+      const hi = this.nowHourIndex();
+      const uvRaw = data.hourly && data.hourly.uv_index ? data.hourly.uv_index[hi] : null;
+      if (e.uv) {
+        if (hi >= 0 && Number.isFinite(uvRaw)) {
+          const uv = Math.round(uvRaw);
+          const [label, cls] = uvLevel(uv);
+          e.uv.textContent = uv;
+          e.uv.className = "stat-value " + cls;
+          if (e.uvBox) e.uvBox.setAttribute("aria-label", `UV index ${uv}, ${label}`);
+          if (e.uvBox) e.uvBox.title = `UV index: ${label}`;
+        } else {
+          e.uv.textContent = "--";
+          e.uv.className = "stat-value";
+        }
+      }
+
+      const ageMin = (Date.now() - this.dataAt) / 60000;
+      this.setUpdated(this.dataAt, ageMin > 30 && !navigator.onLine);
+      this.renderHourly();
+      this.renderDaily();
+      this.tick();
+    },
+
+    selectDay(index) {
+      const ti = this.todayIndex();
+      this.selectedDay = index === null || index === ti || index === this.selectedDay ? null : index;
+      this.renderHourly(true);
+      this.renderDaily();
+      if (this.els.hourlySection && DeviceInfo.isMobile()) {
+        this.els.hourlySection.scrollIntoView({
+          block: "nearest",
+          behavior: reducedMotionQuery.matches ? "auto" : "smooth"
+        });
+      }
+    },
+
+    renderHourly(resetScroll = false) {
+      const e = this.els;
+      const d = this.data;
+      if (!e.hourlyStrip || !d || !d.hourly || !d.hourly.time) return;
+      const h = d.hourly;
+
+      let start;
+      let title;
+      const nowIdx = this.nowHourIndex();
+      if (this.selectedDay === null) {
+        start = Math.max(0, nowIdx);
+        title = "Next 24 hours";
+      } else {
+        const date = d.daily.time[this.selectedDay];
+        start = h.time.findIndex((t) => t.startsWith(date));
+        if (start === -1) {
+          this.selectedDay = null;
+          this.renderHourly(true);
+          return;
+        }
+        title = new Date(date + "T12:00:00Z").toLocaleDateString("en-US", {
+          weekday: "long",
+          day: "numeric",
+          month: "short",
+          timeZone: "UTC"
+        });
+      }
+      const end = Math.min(start + 24, h.time.length);
+
+      if (e.hourlyTitle) e.hourlyTitle.textContent = title;
+      if (e.hourlyReset) e.hourlyReset.hidden = this.selectedDay === null;
+
+      const items = [];
+      for (let i = start; i < end; i++) {
+        const isNow = this.selectedDay === null && i === nowIdx;
+        const pop = h.precipitation_probability ? h.precipitation_probability[i] : null;
+        items.push({
+          key: h.time[i],
+          now: isNow,
+          label: isNow ? "Now" : h.time[i].slice(11, 16),
+          icon: decodeWeather(h.weather_code[i], h.is_day ? h.is_day[i] !== 0 : true).icon,
+          pop: Number.isFinite(pop) && pop >= 20 ? Math.round(pop) : null,
+          temp: Math.round(h.temperature_2m[i])
+        });
+      }
+
+      // Sunrise / sunset markers inside the visible window
+      const from = this.selectedDay === null ? this.cityNowIso() : h.time[start];
+      const to = h.time[end] || "9999";
+      const dl = d.daily || {};
+      [["sunrise", "🌅", "Sunrise"], ["sunset", "🌇", "Sunset"]].forEach(([field, icon, text]) => {
+        (dl[field] || []).forEach((t) => {
+          if (typeof t === "string" && t >= from && t < to) {
+            items.push({ key: t, sun: true, label: t.slice(11, 16), icon, text });
+          }
+        });
+      });
+      items.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+
+      e.hourlyStrip.innerHTML = items
+        .map((it) => {
+          if (it.sun) {
+            return (
+              `<div class="hour-item sun" role="listitem" aria-label="${it.text} at ${escapeHtml(it.label)}">` +
+              `<span class="hour-time">${escapeHtml(it.label)}</span>` +
+              `<span class="hour-icon" aria-hidden="true">${it.icon}</span>` +
+              `<span class="hour-temp sun-text">${it.text}</span></div>`
+            );
+          }
+          const popHtml = it.pop !== null
+            ? `<span class="hour-pop">${it.pop}%</span>`
+            : `<span class="hour-pop empty" aria-hidden="true"></span>`;
+          const aria = `${it.now ? "Now" : escapeHtml(it.label)}: ${it.temp}°` +
+            (it.pop !== null ? `, ${it.pop}% chance of rain` : "");
+          return (
+            `<div class="hour-item${it.now ? " now" : ""}" role="listitem" aria-label="${aria}">` +
+            `<span class="hour-time">${escapeHtml(it.label)}</span>` +
+            `<span class="hour-icon" aria-hidden="true">${it.icon}</span>` +
+            popHtml +
+            `<span class="hour-temp">${it.temp}°</span></div>`
+          );
+        })
+        .join("");
+
+      if (resetScroll) e.hourlyStrip.scrollLeft = 0;
+    },
+
+    renderDaily() {
+      const e = this.els;
+      const d = this.data;
+      if (!e.dailyList || !d || !d.daily || !d.daily.time) return;
+      const dl = d.daily;
+      const ti = this.todayIndex();
+      const days = [];
+      for (let j = ti; j < Math.min(ti + 5, dl.time.length); j++) days.push(j);
+      if (!days.length) return;
+
+      const mins = days.map((j) => dl.temperature_2m_min[j]);
+      const maxs = days.map((j) => dl.temperature_2m_max[j]);
+      const gMin = Math.floor(Math.min(...mins));
+      const gMax = Math.ceil(Math.max(...maxs));
+      const span = Math.max(1, gMax - gMin);
+      const gradient = tempGradient(gMin, gMax);
+      const curTemp = d.current ? d.current.temperature_2m : null;
+
+      e.dailyList.innerHTML = "";
+      days.forEach((j) => {
+        const isToday = j === ti;
+        const date = dl.time[j];
+        const name = isToday
+          ? "Today"
+          : new Date(date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
+        const longName = isToday
+          ? "Today"
+          : new Date(date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+        const info = decodeWeather(dl.weather_code[j], true);
+        const lo = Math.round(dl.temperature_2m_min[j]);
+        const hi = Math.round(dl.temperature_2m_max[j]);
+        const popRaw = dl.precipitation_probability_max ? dl.precipitation_probability_max[j] : null;
+        const pop = Number.isFinite(popRaw) && popRaw >= 20 ? Math.round(popRaw) : null;
+
+        const left = ((dl.temperature_2m_min[j] - gMin) / span) * 100;
+        const right = ((gMax - dl.temperature_2m_max[j]) / span) * 100;
+        const selected = this.selectedDay === null ? isToday : this.selectedDay === j;
+
+        const row = createEl("button", "day-row" + (selected ? " selected" : ""));
+        row.type = "button";
+        row.setAttribute("aria-pressed", String(selected));
+        row.setAttribute(
+          "aria-label",
+          `${longName}: ${info.desc}, low ${lo}°, high ${hi}°` +
+            (pop !== null ? `, ${pop}% chance of rain` : "") +
+            ". Show hourly forecast"
+        );
+
+        row.appendChild(createEl("span", "day-name", name));
+
+        const iconWrap = createEl("span", "day-icon");
+        iconWrap.setAttribute("aria-hidden", "true");
+        iconWrap.appendChild(createEl("span", "day-emoji", info.icon));
+        if (pop !== null) iconWrap.appendChild(createEl("span", "day-pop", pop + "%"));
+        row.appendChild(iconWrap);
+
+        const minEl = createEl("span", "day-min", lo + "°");
+        minEl.setAttribute("aria-hidden", "true");
+        row.appendChild(minEl);
+
+        const bar = createEl("span", "day-bar");
+        bar.setAttribute("aria-hidden", "true");
+        const fill = createEl("span", "day-bar-fill");
+        fill.style.background = gradient;
+        fill.style.setProperty("--l", left.toFixed(1) + "%");
+        fill.style.setProperty("--r", right.toFixed(1) + "%");
+        bar.appendChild(fill);
+        if (isToday && Number.isFinite(curTemp)) {
+          const dot = createEl("span", "day-dot");
+          const x = Math.max(0, Math.min(100, ((curTemp - gMin) / span) * 100));
+          dot.style.left = x.toFixed(1) + "%";
+          bar.appendChild(dot);
+        }
+        row.appendChild(bar);
+
+        const maxEl = createEl("span", "day-max", hi + "°");
+        maxEl.setAttribute("aria-hidden", "true");
+        row.appendChild(maxEl);
+
+        row.addEventListener("click", () => this.selectDay(j));
+        e.dailyList.appendChild(row);
+      });
+    },
+
+    /** Mouse wheel + drag scrolling for the hourly strip on desktop. */
+    setupHourlyScroll() {
+      const strip = this.els.hourlyStrip;
+      if (!strip) return;
+
+      strip.addEventListener(
+        "wheel",
+        (ev) => {
+          if (Math.abs(ev.deltaY) <= Math.abs(ev.deltaX)) return;
+          const max = strip.scrollWidth - strip.clientWidth;
+          if (max <= 0) return;
+          const next = strip.scrollLeft + ev.deltaY;
+          if ((ev.deltaY < 0 && strip.scrollLeft <= 0) || (ev.deltaY > 0 && strip.scrollLeft >= max)) return;
+          ev.preventDefault();
+          strip.scrollLeft = Math.max(0, Math.min(max, next));
+        },
+        { passive: false }
+      );
+
+      let dragging = false;
+      let startX = 0;
+      let startLeft = 0;
+      strip.addEventListener("pointerdown", (ev) => {
+        if (ev.pointerType !== "mouse" || ev.button !== 0) return;
+        dragging = true;
+        startX = ev.clientX;
+        startLeft = strip.scrollLeft;
+        strip.classList.add("dragging");
+      });
+      window.addEventListener("pointermove", (ev) => {
+        if (!dragging) return;
+        strip.scrollLeft = startLeft - (ev.clientX - startX);
+      });
+      window.addEventListener("pointerup", () => {
+        if (!dragging) return;
+        dragging = false;
+        strip.classList.remove("dragging");
+      });
+    }
+  };
+
+  // =====================================================================
+  // PART 27 — CITY / VILLAGE SEARCH
+  // =====================================================================
+  const CitySearch = {
+    dialog: $id("search-dialog"),
+    input: $id("search-input"),
+    list: $id("search-results"),
+    listHead: $id("search-list-head"),
+    listTitle: $id("search-list-title"),
+    clearRecentsBtn: $id("search-clear-recents"),
+    status: $id("search-status"),
+    geoBtn: $id("search-geo"),
+    extBtn: $id("search-extended"),
+    attrib: $id("search-attrib"),
+    closeBtn: $id("search-close"),
+
+    items: [],
+    activeIndex: -1,
+    mode: "recent",
+    reqId: 0,
+    controller: null,
+    opener: null,
+
+    isOpen() {
+      return !!this.dialog && this.dialog.open;
+    },
+
+    init() {
+      if (!this.dialog || !this.input) return;
+
+      this.onInput = debounce(() => this.handleQuery(), 300);
+      this.input.addEventListener("input", () => {
+        this.extBtn.hidden = this.input.value.trim().length < 2;
+        this.onInput();
+      });
+      this.input.addEventListener("keydown", (e) => this.handleKey(e));
+      this.closeBtn.addEventListener("click", () => this.close());
+      this.geoBtn.addEventListener("click", () => this.useMyLocation());
+      this.extBtn.addEventListener("click", () => this.searchExtended());
+      this.clearRecentsBtn.addEventListener("click", () => {
+        Recents.clear();
+        this.showRecents();
+        this.input.focus();
+      });
+
+      // Click on the dimmed backdrop closes the dialog
+      this.dialog.addEventListener("click", (e) => {
+        if (e.target === this.dialog) this.close();
+      });
+      this.dialog.addEventListener("close", () => {
+        this.abort();
+        this.onInput.cancel();
+        if (this.opener && document.contains(this.opener)) this.opener.focus();
+      });
+    },
+
+    open(opener) {
+      if (!this.dialog) return;
+      this.opener = opener || document.activeElement;
+      this.input.value = "";
+      this.extBtn.hidden = true;
+      this.showRecents();
+      if (typeof this.dialog.showModal === "function") {
+        if (!this.dialog.open) this.dialog.showModal();
+      } else {
+        this.dialog.setAttribute("open", "");
+      }
+      setTimeout(() => this.input.focus(), 30);
+    },
+
+    close() {
+      if (!this.dialog) return;
+      if (typeof this.dialog.close === "function") this.dialog.close();
+      else this.dialog.removeAttribute("open");
+    },
+
+    abort() {
+      this.reqId++;
+      if (this.controller) this.controller.abort();
+      this.controller = null;
+      this.input.removeAttribute("aria-busy");
+    },
+
+    setStatus(text) {
+      this.status.textContent = text || "";
+    },
+
+    showRecents() {
+      this.abort();
+      const recents = Recents.list();
+      this.attrib.hidden = true;
+      this.render(recents, "recent");
+      this.listHead.hidden = recents.length === 0;
+      this.listTitle.textContent = "Recent";
+      this.clearRecentsBtn.hidden = recents.length === 0;
+      this.setStatus(recents.length ? "" : "Type a city, town or village name");
+    },
+
+    handleQuery() {
+      const q = this.input.value.trim();
+      if (q.length < 2) {
+        this.showRecents();
+        return;
+      }
+      this.search(q);
+    },
+
+    async run(fetcher, mode, q) {
+      this.abort();
+      const id = this.reqId;
+      const controller = (this.controller = new AbortController());
+      this.input.setAttribute("aria-busy", "true");
+      this.setStatus(mode === "extended" ? "Searching OpenStreetMap…" : "Searching…");
+      try {
+        const results = await fetcher(q, controller.signal);
+        if (id !== this.reqId) return;
+        this.input.removeAttribute("aria-busy");
+        this.listHead.hidden = results.length === 0;
+        this.listTitle.textContent = mode === "extended" ? "Extended results" : "Results";
+        this.clearRecentsBtn.hidden = true;
+        this.attrib.hidden = mode !== "extended";
+        this.render(results, mode);
+        if (results.length) {
+          this.setStatus(`${results.length} result${results.length > 1 ? "s" : ""}`);
+        } else {
+          this.setStatus(
+            mode === "extended"
+              ? "No places found. Check the spelling or try another name."
+              : "No results — try the extended search below."
+          );
+        }
+        this.extBtn.hidden = mode === "extended";
+      } catch (err) {
+        if (err.name === "AbortError" || id !== this.reqId) return;
+        this.input.removeAttribute("aria-busy");
+        this.setStatus("Search failed — check your connection.");
+      }
+    },
+
+    search(q) {
+      return this.run((query, signal) => Geo.search(query, signal), "results", q);
+    },
+
+    searchExtended() {
+      const q = this.input.value.trim();
+      if (q.length < 2) return;
+      this.onInput.cancel();
+      return this.run((query, signal) => Geo.searchExtended(query, signal), "extended", q);
+    },
+
+    render(items, mode) {
+      // de-duplicate by coordinates
+      const seen = new Set();
+      this.items = items.filter((loc) => {
+        const k = locationKey(loc);
+        if (seen.has(k)) return false;
+        seen.add(k);
+        return true;
+      });
+      this.mode = mode;
+      this.activeIndex = -1;
+      this.input.removeAttribute("aria-activedescendant");
+      this.list.innerHTML = "";
+
+      this.items.forEach((loc, i) => {
+        const li = createEl("li", "search-option");
+        li.id = "search-opt-" + i;
+        li.setAttribute("role", "option");
+        li.setAttribute("aria-selected", "false");
+
+        const flag = createEl("span", "opt-flag", flagEmoji(loc.cc));
+        flag.setAttribute("aria-hidden", "true");
+        const text = createEl("span", "opt-text");
+        const name = createEl("span", "opt-name", loc.name);
+        name.dir = "auto";
+        text.appendChild(name);
+        if (loc.sub) {
+          const sub = createEl("span", "opt-sub", loc.sub);
+          sub.dir = "auto";
+          text.appendChild(sub);
+        }
+        li.append(flag, text);
+
+        li.addEventListener("click", () => this.select(i));
+        li.addEventListener("mousemove", () => this.setActive(i, false));
+        this.list.appendChild(li);
+      });
+
+      this.input.setAttribute("aria-expanded", String(this.items.length > 0));
+    },
+
+    setActive(i, scroll = true) {
+      const options = this.list.querySelectorAll(".search-option");
+      options.forEach((el, j) => {
+        const on = j === i;
+        el.classList.toggle("active", on);
+        el.setAttribute("aria-selected", String(on));
+      });
+      this.activeIndex = i;
+      if (i >= 0 && options[i]) {
+        this.input.setAttribute("aria-activedescendant", options[i].id);
+        if (scroll) options[i].scrollIntoView({ block: "nearest" });
+      } else {
+        this.input.removeAttribute("aria-activedescendant");
+      }
+    },
+
+    handleKey(e) {
+      const n = this.items.length;
+      if (e.key === "ArrowDown" && n) {
+        e.preventDefault();
+        this.setActive((this.activeIndex + 1) % n);
+      } else if (e.key === "ArrowUp" && n) {
+        e.preventDefault();
+        this.setActive((this.activeIndex - 1 + n) % n);
+      } else if (e.key === "Enter") {
+        e.preventDefault();
+        if (this.activeIndex >= 0) {
+          this.select(this.activeIndex);
+        } else if (this.input.value.trim().length >= 2) {
+          // Enter = search now; on results with no match → extended search
+          if (this.mode === "results" && n === 0) this.searchExtended();
+          else if (this.mode === "results" && n > 0) this.select(0);
+          else {
+            this.onInput.cancel();
+            this.search(this.input.value.trim());
+          }
+        }
+      }
+    },
+
+    select(i) {
+      const loc = this.items[i];
+      if (!loc) return;
+      Weather.setLocation(loc, { save: true });
+      Recents.add(loc);
+      this.close();
+      showToast(`📍 ${locationLabel(loc)}`, "success");
+    },
+
+    async useMyLocation() {
+      this.abort();
+      this.setStatus("Locating…");
+      this.geoBtn.disabled = true;
+      try {
+        const loc = await Weather.locateMe();
+        if (!this.isOpen()) return;
+        this.close();
+        if (loc) showToast(`📍 ${locationLabel(loc)}`, "success");
+      } catch (err) {
+        const messages = {
+          1: "Location permission denied. Allow it in your browser settings, or search instead.",
+          2: "Your location is unavailable right now.",
+          3: "Locating timed out. Try again."
+        };
+        this.setStatus(messages[err && err.code] || "Could not get your location.");
+      } finally {
+        this.geoBtn.disabled = false;
+      }
+    }
+  };
+
+  // =====================================================================
+  // PART 28 — TOUCH SUPPORT (swipe to close the settings panel)
   // =====================================================================
   function setupTouchSupport() {
-    let touchStartX = 0;
-    const threshold = 60;
+    if (!panel) return;
+    let startX = 0;
+    let startY = 0;
+    let startScroll = 0;
 
-    document.addEventListener(
+    panel.addEventListener(
       "touchstart",
       (e) => {
-        touchStartX = e.changedTouches[0].screenX;
+        const t = e.changedTouches[0];
+        startX = t.clientX;
+        startY = t.clientY;
+        startScroll = panel.scrollTop;
       },
       { passive: true }
     );
 
-    document.addEventListener(
+    panel.addEventListener(
       "touchend",
       (e) => {
-        const diff = touchStartX - e.changedTouches[0].screenX;
-        if (diff > threshold && touchStartX > window.innerWidth - 60) {
-          togglePanel(true);
-        }
-        if (diff < -threshold && panel && panel.classList.contains("open")) {
-          togglePanel(false);
-        }
+        if (!isPanelOpen()) return;
+        const t = e.changedTouches[0];
+        const dx = t.clientX - startX;
+        const dy = t.clientY - startY;
+        const isSheet = window.innerWidth <= 480;
+        if (isSheet && dy > 90 && Math.abs(dx) < 60 && startScroll <= 0) togglePanel(false);
+        if (!isSheet && dx > 90 && Math.abs(dy) < 60) togglePanel(false);
       },
       { passive: true }
     );
   }
 
   // =====================================================================
-  // PART 27 — MAIN INITIALIZATION
+  // PART 29 — KEYBOARD SHORTCUTS
+  // ---------------------------------------------------------------------
+  // e.code (physical key) works with any keyboard layout, incl. Arabic.
   // =====================================================================
-  document.addEventListener("DOMContentLoaded", () => {
+  function setupKeyboard() {
+    document.addEventListener("keydown", (e) => {
+      if (CitySearch.isOpen()) return; // the dialog handles its own keys
+      const t = e.target;
+      const tag = t && t.tagName;
+      const typing = tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || (t && t.isContentEditable);
+
+      if (e.key === "Escape") {
+        if (isPanelOpen()) togglePanel(false);
+        return;
+      }
+      if (typing || e.ctrlKey || e.metaKey || e.altKey) return;
+
+      switch (e.code) {
+        case "KeyS":
+          e.preventDefault();
+          setSound(!AudioManager.isPlaying);
+          break;
+        case "KeyF":
+          if (FullscreenAPI.supported()) {
+            e.preventDefault();
+            FullscreenAPI.toggle();
+          }
+          break;
+        case "KeyP":
+          e.preventDefault();
+          togglePanel();
+          break;
+        case "Slash":
+          e.preventDefault();
+          CitySearch.open();
+          break;
+        default:
+          break;
+      }
+    });
+  }
+
+  // =====================================================================
+  // PART 30 — MAIN INITIALIZATION
+  // =====================================================================
+  function init() {
     AudioManager.init(rainAudio);
     PWAManager.init();
-    setupMediaErrorHandlers();
+    FullscreenAPI.init();
+    setupMediaHandlers();
     setupFocusTrap();
 
-    const hasUrlParams = loadFromUrl();
-    if (!hasUrlParams) loadFromLocalStorage();
-
-    const blurSlider = $id("blur-range");
-    if (blurSlider) blurSlider.max = DeviceInfo.getMaxBlur();
+    const fromUrl = loadFromUrl();
+    if (!fromUrl.hasSettings) loadFromLocalStorage();
 
     createPresets();
     applyStateToUI();
+    ensureRain();
 
-    if (
-      state.currentPresetIndex >= 0 &&
-      state.currentPresetIndex < PRESETS.length
-    ) {
-      setBackground(
-        PRESETS[state.currentPresetIndex].url,
-        PRESETS[state.currentPresetIndex].type,
-        state.currentPresetIndex
-      );
+    if (state.currentPresetIndex >= 0 && state.currentPresetIndex < PRESETS.length) {
+      const p = PRESETS[state.currentPresetIndex];
+      setBackground(p.url, p.type, state.currentPresetIndex);
+    } else if (isValidUrl(state.currentUrl)) {
+      setBackground(state.currentUrl, state.currentType, -1);
+    } else {
+      setBackground(PRESETS[0].url, PRESETS[0].type, 0);
     }
-
-    setTimeout(initRainyGlass, 500);
 
     setupSlider("blur", "blur", "px");
     setupSlider("brightness", "brightness", "%");
@@ -1716,21 +2710,7 @@
       });
     }
 
-    const enableAudioOnFirstGesture = () => {
-      if (state.soundOn) {
-        AudioManager.setVolume(state.volume / 100);
-        AudioManager.play().catch(() => {});
-      }
-      window.removeEventListener("pointerdown", enableAudioOnFirstGesture);
-      window.removeEventListener("keydown", enableAudioOnFirstGesture);
-      window.removeEventListener("touchstart", enableAudioOnFirstGesture);
-    };
-    window.addEventListener("pointerdown", enableAudioOnFirstGesture, { once: true });
-    window.addEventListener("keydown", enableAudioOnFirstGesture, { once: true });
-    window.addEventListener("touchstart", enableAudioOnFirstGesture, {
-      once: true,
-      passive: true
-    });
+    setupAudioUnlock();
 
     if (settingsBtn) {
       settingsBtn.addEventListener("click", (e) => {
@@ -1740,31 +2720,29 @@
     }
 
     const panelCloseBtn = $id("panel-close");
-    if (panelCloseBtn) {
-      panelCloseBtn.addEventListener("click", () => togglePanel(false));
-    }
+    if (panelCloseBtn) panelCloseBtn.addEventListener("click", () => togglePanel(false));
 
-    if (soundBtn) {
-      soundBtn.addEventListener("click", () => setSound(!state.soundOn));
-    }
-
-    const fullscreenBtn = $id("btn-fullscreen");
-    FullscreenAPI.init();
-    if (fullscreenBtn) {
-      fullscreenBtn.addEventListener("click", (e) => {
+    const skipLink = document.querySelector(".skip-link");
+    if (skipLink) {
+      skipLink.addEventListener("click", (e) => {
         e.preventDefault();
-        FullscreenAPI.toggle();
+        togglePanel(true);
       });
     }
 
+    if (soundBtn) {
+      soundBtn.addEventListener("click", () => setSound(!AudioManager.isPlaying));
+    }
+
+    // Click outside closes the side panel (desktop)
     document.addEventListener("click", (e) => {
       if (
         window.innerWidth > 768 &&
-        panel &&
+        isPanelOpen() &&
         !panel.contains(e.target) &&
         !e.target.closest(".ui-btn") &&
         !e.target.closest(".skip-link") &&
-        panel.classList.contains("open")
+        !e.target.closest("#search-dialog")
       ) {
         togglePanel(false);
       }
@@ -1778,29 +2756,25 @@
         });
         btn.classList.add("active");
         btn.setAttribute("aria-checked", "true");
-        state.overlayColor = btn.dataset.color;
+        state.overlayColor = OVERLAY_COLORS.includes(btn.dataset.color) ? btn.dataset.color : "none";
 
         const overlayRange = $id("overlay-range");
         const overlayVal = $id("overlay-val");
-
         if (state.overlayColor === "none") {
           state.overlayOpacity = 0;
-          if (overlayRange) overlayRange.value = 0;
-          if (overlayVal) overlayVal.textContent = "0%";
         } else if (state.overlayOpacity === 0) {
           state.overlayOpacity = 30;
-          if (overlayRange) overlayRange.value = 30;
-          if (overlayVal) overlayVal.textContent = "30%";
         }
-        updateFilters();
+        if (overlayRange) overlayRange.value = state.overlayOpacity;
+        if (overlayVal) overlayVal.textContent = state.overlayOpacity + "%";
       });
     });
 
     const urlBtn = $id("url-btn");
+    const urlInput = $id("url-input");
     if (urlBtn) {
       urlBtn.addEventListener("click", () => {
-        const input = $id("url-input");
-        const raw = input ? input.value.trim() : "";
+        const raw = urlInput ? urlInput.value.trim() : "";
         if (!raw) {
           showToast("Please enter a URL", "error");
           return;
@@ -1812,42 +2786,36 @@
         }
         const type = isVideoUrl(safe) ? "video" : "image";
         setBackground(safe, type, -1);
-        if (input) input.value = "";
-        showToast(type === "video" ? "Video loaded" : "Image loaded", "success");
+        if (urlInput) urlInput.value = "";
       });
     }
-
-    const urlInput = $id("url-input");
     if (urlInput) {
-      urlInput.addEventListener("keypress", (e) => {
-        if (e.key === "Enter") urlBtn && urlBtn.click();
+      urlInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && urlBtn) urlBtn.click();
       });
     }
 
     const fileBtn = $id("file-btn");
     const fileInput = $id("file-input");
-    if (fileBtn) {
-      fileBtn.addEventListener("click", () => fileInput && fileInput.click());
-    }
+    if (fileBtn && fileInput) fileBtn.addEventListener("click", () => fileInput.click());
     if (fileInput) {
       fileInput.addEventListener("change", (e) => {
         const file = e.target.files[0];
         if (file) {
           if (file.size > 50 * 1024 * 1024) {
             showToast("File too large (max 50MB)", "error");
-            return;
+          } else {
+            const blobUrl = ResourceManager.createBlobUrl(file);
+            const type = file.type.startsWith("video/") ? "video" : "image";
+            setBackground(blobUrl, type, -1);
           }
-          const blobUrl = ResourceManager.createBlobUrl(file);
-          const type = file.type.startsWith("video/") ? "video" : "image";
-          setBackground(blobUrl, type, -1);
-          showToast(type === "video" ? "Video loaded" : "Image loaded", "success");
         }
         e.target.value = "";
       });
     }
 
     const shareBtn = $id("btn-share");
-    if (shareBtn) shareBtn.addEventListener("click", () => copyToClipboard(generateShareUrl()));
+    if (shareBtn) shareBtn.addEventListener("click", shareSettings);
 
     const saveBtn = $id("btn-save");
     if (saveBtn) saveBtn.addEventListener("click", saveToLocalStorage);
@@ -1859,58 +2827,64 @@
       });
     }
 
-    document.addEventListener("keydown", (e) => {
-      if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA") return;
-      if (e.key === "Escape") togglePanel(false);
-      if (e.key === "s" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        setSound(!state.soundOn);
-      }
-      if (e.key === "f" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        FullscreenAPI.toggle();
-      }
-      if (e.key === "p" && !e.ctrlKey && !e.metaKey) {
-        e.preventDefault();
-        togglePanel();
-      }
-    });
+    const locBtn = $id("btn-location");
+    if (locBtn) locBtn.addEventListener("click", () => CitySearch.open(locBtn));
 
-    const cleanup = () => {
-      try {
-        ResourceManager.cleanup();
-        Clock.stop();
-      } catch (e) {
-        console.warn("Cleanup error:", e);
-      }
-    };
-    window.addEventListener("pagehide", cleanup, { once: true });
-    window.addEventListener("beforeunload", cleanup, { once: true });
+    const changeLocBtn = $id("btn-change-location");
+    if (changeLocBtn) {
+      changeLocBtn.addEventListener("click", () => {
+        togglePanel(false);
+        CitySearch.open(locBtn);
+      });
+    }
+
+    setupKeyboard();
+
+    // Free uploaded files only when the page is really unloaded (keeps bfcache working)
+    window.addEventListener("pagehide", (e) => {
+      if (!e.persisted) ResourceManager.revokeAll();
+    });
 
     document.addEventListener("visibilitychange", () => {
-      if (state.currentType === "video") {
-        if (document.hidden) customVideo.pause();
-        else customVideo.play().catch(() => {});
-      }
+      if (state.currentType !== "video") return;
+      if (document.hidden) customVideo.pause();
+      else customVideo.play().catch(() => {});
     });
 
-    const handleResize = debounce(() => {
-      if (rainyGlassInstance && !rainyGlassInstance.isDestroyed) {
-        rainyGlassInstance.resize();
-      }
-    }, 200);
-    window.addEventListener("resize", handleResize);
+    window.addEventListener(
+      "resize",
+      debounce(() => {
+        const blurRange = $id("blur-range");
+        const max = DeviceInfo.getMaxBlur();
+        if (blurRange) blurRange.max = max;
+        if (state.blur > max) {
+          state.blur = max;
+          applyStateToUI();
+        }
+      }, 200)
+    );
+
+    const onMotionPref = () => {
+      if (rainyGlassInstance) rainyGlassInstance.setOptions({ reducedMotion: reducedMotionQuery.matches });
+    };
+    if (reducedMotionQuery.addEventListener) reducedMotionQuery.addEventListener("change", onMotionPref);
 
     setupTouchSupport();
-
+    CitySearch.init();
+    Weather.init(fromUrl.location);
     Clock.start();
-    Weather.init();
 
     console.log(
-      "%c Weather Cloud %c v1.0.0 %c by SAIF G.M.D ",
+      `%c Weather Cloud %c v${APP_VERSION} %c by SAIF G.M.D `,
       "background:linear-gradient(135deg,#6cf,#8af);color:#000;font-weight:bold;padding:4px 8px;border-radius:4px 0 0 4px",
       "background:#1a1f2a;color:#6cf;padding:4px 8px",
       "background:#0a0e14;color:#8af;padding:4px 8px;border-radius:0 4px 4px 0"
     );
-  });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", init);
+  } else {
+    init();
+  }
 })();
