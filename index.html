@@ -4,21 +4,33 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0a0e14" />
-  <meta name="description" content="Weather Cloud — Interactive rainy window with WebGL raindrops. By SAIF G.M.D" />
+  <meta name="description" content="Weather Cloud — Interactive rainy window with WebGL raindrops, live weather, 24-hour and 5-day forecast. By SAIF G.M.D" />
   <meta name="author" content="SAIF G.M.D" />
   <meta name="application-name" content="Weather Cloud" />
 
-  <meta property="og:title" content="Weather Cloud" />
-  <meta property="og:description" content="Interactive rainy window — by SAIF G.M.D" />
-  <meta property="og:type" content="website" />
+  <!-- iOS home-screen app -->
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-title" content="Weather Cloud" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
 
-  <meta name="twitter:card" content="summary_large_image" />
+  <!-- Social previews (absolute URLs are required by most platforms) -->
+  <meta property="og:title" content="Weather Cloud" />
+  <meta property="og:description" content="Interactive rainy window with live weather — by SAIF G.M.D" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://saifgmd.github.io/weather-cloud/" />
+  <meta property="og:image" content="https://saifgmd.github.io/weather-cloud/icons/icon-512.png" />
+  <meta name="twitter:card" content="summary" />
   <meta name="twitter:title" content="Weather Cloud" />
+  <meta name="twitter:image" content="https://saifgmd.github.io/weather-cloud/icons/icon-512.png" />
 
   <title>Weather Cloud — SAIF G.M.D</title>
 
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="manifest" href="manifest.json" />
+  <link rel="preconnect" href="https://api.open-meteo.com" crossorigin />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -26,104 +38,138 @@
   <!-- Skip Link -->
   <a href="#panel" class="skip-link">Skip to settings</a>
 
-  <!-- Background Image -->
-  <img
-    id="custom-bg"
-    src="https://picsum.photos/id/1015/1920/1080"
-    alt="Rainy background"
-    crossorigin="anonymous"
-  />
+  <!-- Background Image (CORS mode so WebGL can refract it) -->
+  <img id="custom-bg" alt="" crossorigin="anonymous" />
 
   <!-- Background Video -->
   <video id="custom-video" class="hidden" muted loop playsinline webkit-playsinline preload="metadata" aria-hidden="true"></video>
 
+  <!-- Raindrops Canvas (transparent except inside the drops) -->
+  <canvas id="bg-canvas" aria-hidden="true"></canvas>
+
   <!-- Color Overlay -->
   <div id="color-overlay" aria-hidden="true"></div>
 
-  <!-- Raindrops Canvas -->
-  <canvas id="bg-canvas" aria-hidden="true"></canvas>
-
   <!-- Loading Overlay -->
   <div id="loading-overlay" role="status" aria-live="polite">
-    <div class="loader-spinner"></div>
+    <div class="loader-spinner" aria-hidden="true"></div>
     <span class="loader-text">Loading...</span>
   </div>
 
-  <!-- Widgets Stack (centered iOS style) -->
-  <div class="widgets-stack" id="widgets-container">
+  <!-- Widgets -->
+  <main class="widgets-stack" id="widgets-container">
+    <div class="widgets-inner">
 
-    <!-- Clock Card -->
-    <div class="glass-card clock-card" id="datetime-widget">
-      <div class="clock-time">
-        <span id="time-display">--:--</span>
-        <span class="clock-seconds" id="time-seconds">--</span>
-      </div>
-      <div class="clock-date" id="date-display">--</div>
-      <div class="clock-day" id="day-display">--</div>
-      <div class="clock-pill" id="day-phase">
-        <span class="pill-icon" id="day-phase-icon">☀️</span>
-        <span id="day-phase-text">--</span>
-      </div>
+      <!-- Clock Card -->
+      <section class="glass-card clock-card" id="datetime-widget" aria-label="Clock">
+        <div class="clock-time">
+          <span id="time-display">--:--</span>
+          <span class="clock-side">
+            <span class="clock-seconds" id="time-seconds">--</span>
+            <span class="clock-ampm" id="time-ampm">--</span>
+          </span>
+        </div>
+        <div class="clock-date" id="date-display">--</div>
+        <div class="clock-day" id="day-display">--</div>
+        <div class="clock-pill" id="day-phase">
+          <span class="pill-icon" id="day-phase-icon" aria-hidden="true">☀️</span>
+          <span id="day-phase-text">--</span>
+        </div>
+      </section>
+
+      <!-- Weather Card -->
+      <section class="glass-card weather-card" id="weather-widget" aria-label="Current weather">
+        <div class="weather-header">
+          <button class="loc-btn" id="btn-location" type="button" aria-label="Change location" title="Search city or village (/)">
+            <span class="loc-pin" aria-hidden="true">📍</span>
+            <span class="loc-name" id="weather-location" dir="auto">--</span>
+            <span class="loc-chevron" aria-hidden="true">⌄</span>
+          </button>
+          <div class="weather-meta">
+            <span class="loc-time" id="weather-time" title="Local time at this location">--:--</span>
+            <span class="weather-updated" id="weather-updated"></span>
+          </div>
+        </div>
+
+        <div class="weather-hero">
+          <div class="weather-icon-big" id="weather-icon" aria-hidden="true">☁️</div>
+          <div class="weather-temp-wrap">
+            <span class="weather-temp" id="weather-temp">--</span>
+            <span class="weather-unit">°C</span>
+          </div>
+        </div>
+
+        <div class="weather-desc" id="weather-desc">--</div>
+        <div class="weather-hilo" id="weather-hilo"></div>
+
+        <div class="weather-stats">
+          <div class="stat-box" title="Humidity">
+            <div class="stat-icon" aria-hidden="true">💧</div>
+            <div class="stat-value" id="weather-humidity">--</div>
+            <div class="stat-label">Humidity</div>
+          </div>
+          <div class="stat-box" title="Wind">
+            <div class="stat-icon" aria-hidden="true">💨</div>
+            <div class="stat-value" id="weather-wind">--</div>
+            <div class="stat-label">Wind</div>
+          </div>
+          <div class="stat-box" title="Feels like">
+            <div class="stat-icon" aria-hidden="true">🌡️</div>
+            <div class="stat-value" id="weather-feels">--</div>
+            <div class="stat-label">Feels</div>
+          </div>
+          <div class="stat-box" id="weather-uv-box" title="UV index">
+            <div class="stat-icon" aria-hidden="true">🔆</div>
+            <div class="stat-value" id="weather-uv">--</div>
+            <div class="stat-label">UV</div>
+          </div>
+        </div>
+
+        <div class="hourly" id="hourly-section">
+          <div class="section-head">
+            <h2 class="section-title" id="hourly-title">Next 24 hours</h2>
+            <button class="section-link" id="hourly-reset" type="button" hidden>Back to now</button>
+          </div>
+          <div class="hourly-strip" id="hourly-strip" role="list" tabindex="0" aria-labelledby="hourly-title"></div>
+        </div>
+      </section>
+
+      <!-- 5-Day Forecast Card -->
+      <section class="glass-card days-card" id="daily-widget" aria-labelledby="daily-title">
+        <div class="section-head">
+          <h2 class="section-title" id="daily-title">5-day forecast</h2>
+          <span class="section-hint" aria-hidden="true">Tap a day for hours</span>
+        </div>
+        <div class="daily-list" id="daily-list"></div>
+      </section>
+
     </div>
-
-    <!-- Weather Card -->
-    <div class="glass-card weather-card" id="weather-widget">
-      <div class="weather-header">
-        <div class="weather-loc-wrap">
-          <span class="loc-pin">📍</span>
-          <span class="loc-name" id="weather-location">--</span>
-          <span class="loc-dot">•</span>
-          <span class="loc-time" id="weather-time">--:--</span>
-        </div>
-        <div class="weather-updated" id="weather-updated">--:--</div>
-      </div>
-
-      <div class="weather-hero">
-        <div class="weather-icon-big" id="weather-icon">☀️</div>
-        <div class="weather-temp-wrap">
-          <span class="weather-temp" id="weather-temp">--</span>
-          <span class="weather-unit">°C</span>
-        </div>
-      </div>
-
-      <div class="weather-desc" id="weather-desc">--</div>
-
-      <div class="weather-stats">
-        <div class="stat-box">
-          <div class="stat-icon">💧</div>
-          <div class="stat-value" id="weather-humidity">--%</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-icon">💨</div>
-          <div class="stat-value" id="weather-wind">-- km/h</div>
-        </div>
-        <div class="stat-box">
-          <div class="stat-icon">🌡️</div>
-          <div class="stat-value" id="weather-feels">--°</div>
-        </div>
-      </div>
-
-      <div class="weather-forecast" id="weather-forecast">
-        <!-- Filled by JS -->
-      </div>
-    </div>
-
-  </div>
+  </main>
 
   <!-- Top-Right UI Buttons -->
   <div class="ui-controls">
-    <button id="btn-sound" class="ui-btn" type="button" aria-label="Toggle sound" aria-pressed="true">
-      <span id="sound-toggle">🔊</span>
+    <button id="btn-sound" class="ui-btn" type="button" aria-label="Rain sound" aria-pressed="false">
+      <span id="sound-toggle" aria-hidden="true">🔇</span>
     </button>
-    <button id="btn-fullscreen" class="ui-btn" type="button" aria-label="Enter fullscreen">⛶</button>
-    <button id="btn-settings" class="ui-btn" type="button" aria-label="Open settings" aria-expanded="false">⚙</button>
+    <button id="btn-fullscreen" class="ui-btn" type="button" aria-label="Enter fullscreen" title="Fullscreen (F)">⛶</button>
+    <button id="btn-settings" class="ui-btn" type="button" aria-label="Settings" aria-controls="panel" aria-expanded="false" title="Settings (P)">⚙</button>
   </div>
 
   <!-- Settings Panel -->
-  <aside id="panel" class="panel" aria-hidden="true" aria-label="Settings">
-    <button id="panel-close" class="panel-close" type="button" aria-label="Close settings">✕</button>
+  <aside id="panel" class="panel" aria-label="Settings" inert>
+    <div class="panel-head">
+      <h2 class="panel-title">Settings</h2>
+      <button id="panel-close" class="panel-close" type="button" aria-label="Close settings">✕</button>
+    </div>
 
-    <h2 class="panel-title">Settings</h2>
+    <div class="control-group">
+      <span class="group-label">Location</span>
+      <button id="btn-change-location" type="button" class="wide-btn loc-change">
+        <span aria-hidden="true">📍</span>
+        <span id="panel-location" dir="auto">--</span>
+        <span class="loc-change-hint">Change</span>
+      </button>
+    </div>
 
     <div class="control-group">
       <label for="blur-range">Blur <span id="blur-val" class="value">5px</span></label>
@@ -137,7 +183,7 @@
 
     <div class="control-group">
       <label for="rain-range">Rain <span id="rain-val" class="value">70%</span></label>
-      <input type="range" id="rain-range" min="20" max="100" value="70" step="1" />
+      <input type="range" id="rain-range" min="0" max="100" value="70" step="1" />
     </div>
 
     <div class="control-group">
@@ -145,11 +191,11 @@
       <input type="range" id="overlay-range" min="0" max="80" value="0" step="1" />
       <div class="color-grid" role="radiogroup" aria-label="Overlay color">
         <button class="color-btn active" data-color="none" type="button" aria-checked="true" role="radio">None</button>
-        <button class="color-btn" data-color="#3b82f6" type="button" aria-checked="false" role="radio">Blue</button>
-        <button class="color-btn" data-color="#8b5cf6" type="button" aria-checked="false" role="radio">Purple</button>
-        <button class="color-btn" data-color="#ef4444" type="button" aria-checked="false" role="radio">Red</button>
-        <button class="color-btn" data-color="#10b981" type="button" aria-checked="false" role="radio">Green</button>
-        <button class="color-btn" data-color="#f59e0b" type="button" aria-checked="false" role="radio">Amber</button>
+        <button class="color-btn" data-color="#3b82f6" type="button" aria-checked="false" role="radio"><i class="swatch" style="background:#3b82f6"></i>Blue</button>
+        <button class="color-btn" data-color="#8b5cf6" type="button" aria-checked="false" role="radio"><i class="swatch" style="background:#8b5cf6"></i>Purple</button>
+        <button class="color-btn" data-color="#ef4444" type="button" aria-checked="false" role="radio"><i class="swatch" style="background:#ef4444"></i>Red</button>
+        <button class="color-btn" data-color="#10b981" type="button" aria-checked="false" role="radio"><i class="swatch" style="background:#10b981"></i>Green</button>
+        <button class="color-btn" data-color="#f59e0b" type="button" aria-checked="false" role="radio"><i class="swatch" style="background:#f59e0b"></i>Amber</button>
       </div>
     </div>
 
@@ -159,8 +205,8 @@
     </div>
 
     <div class="control-group">
-      <label>Background</label>
-      <div id="preset-grid" class="preset-grid" role="listbox" aria-label="Background presets"></div>
+      <span class="group-label" id="bg-label">Background</span>
+      <div id="preset-grid" class="preset-grid" role="group" aria-labelledby="bg-label"></div>
     </div>
 
     <div class="control-group">
@@ -172,7 +218,7 @@
     </div>
 
     <div class="control-group">
-      <label>Upload</label>
+      <span class="group-label">Upload</span>
       <input type="file" id="file-input" accept="image/*,video/*" hidden />
       <button id="file-btn" type="button" class="wide-btn">Choose File…</button>
     </div>
@@ -184,19 +230,75 @@
       <button id="btn-install" type="button" class="action-btn install hidden">Install App</button>
     </div>
 
+    <p class="shortcuts">
+      <kbd>S</kbd> Sound · <kbd>F</kbd> Fullscreen · <kbd>P</kbd> Settings · <kbd>/</kbd> Search
+    </p>
+
     <footer class="app-footer">
       <small>
         <strong>Weather Cloud</strong> — by
         <span class="signature">SAIF G.M.D</span>
       </small>
+      <small class="credits">
+        Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>
+      </small>
     </footer>
   </aside>
 
+  <!-- City / Village Search -->
+  <dialog id="search-dialog" class="search-dialog" aria-labelledby="search-title">
+    <div class="search-inner">
+      <h2 id="search-title" class="visually-hidden">Search location</h2>
+      <div class="search-bar">
+        <span class="search-icon" aria-hidden="true">🔍</span>
+        <input
+          id="search-input"
+          type="search"
+          dir="auto"
+          placeholder="Search city or village…"
+          autocomplete="off"
+          autocapitalize="off"
+          spellcheck="false"
+          enterkeyhint="search"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded="false"
+          aria-controls="search-results"
+          aria-label="Search city or village"
+        />
+        <button id="search-close" class="search-close" type="button" aria-label="Close search">✕</button>
+      </div>
+
+      <button id="search-geo" class="search-geo" type="button">
+        <span aria-hidden="true">📍</span> Use my current location
+      </button>
+
+      <div class="search-list-head" id="search-list-head" hidden>
+        <span id="search-list-title">Recent</span>
+        <button id="search-clear-recents" type="button" class="section-link">Clear</button>
+      </div>
+      <ul id="search-results" class="search-results" role="listbox" aria-label="Locations"></ul>
+
+      <p id="search-status" class="search-status" role="status" aria-live="polite"></p>
+
+      <button id="search-extended" class="search-extended" type="button" hidden>
+        Can't find it? Extended search (OpenStreetMap)
+      </button>
+      <p id="search-attrib" class="search-attrib" hidden>
+        Results © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>
+      </p>
+    </div>
+  </dialog>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <audio id="rain-audio" loop preload="auto">
-    <source src="https://fyildiz1974.github.io/web/files/rain.mp3" type="audio/mpeg" />
-  </audio>
+  <!-- Sources are tried in order: put rain.mp3 next to index.html for offline sound -->
+  <audio
+    id="rain-audio"
+    loop
+    preload="auto"
+    data-sources="rain.mp3, https://fyildiz1974.github.io/web/files/rain.mp3"
+  ></audio>
 
   <script src="app.js"></script>
 </body>
