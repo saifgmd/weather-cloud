@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#0a0e14" />
+  <meta name="color-scheme" content="dark" />
   <meta name="description" content="Weather Cloud — Interactive rainy window with WebGL raindrops, live weather, 24-hour and 5-day forecast. By SAIF G.M.D" />
   <meta name="author" content="SAIF G.M.D" />
   <meta name="application-name" content="Weather Cloud" />
@@ -44,8 +45,15 @@
   <!-- Background Video -->
   <video id="custom-video" class="hidden" muted loop playsinline webkit-playsinline preload="metadata" aria-hidden="true"></video>
 
+  <!-- Live window effects (outside air → glass → light) -->
+  <canvas id="fx-dust" class="fx" aria-hidden="true"></canvas>
+  <canvas id="fx-fog" class="fx" aria-hidden="true"></canvas>
+
   <!-- Raindrops Canvas (transparent except inside the drops) -->
   <canvas id="bg-canvas" aria-hidden="true"></canvas>
+
+  <div id="fx-glare" class="fx" aria-hidden="true"></div>
+  <div id="fx-flash" class="fx" aria-hidden="true"></div>
 
   <!-- Color Overlay -->
   <div id="color-overlay" aria-hidden="true"></div>
@@ -60,23 +68,6 @@
   <main class="widgets-stack" id="widgets-container">
     <div class="widgets-inner">
 
-      <!-- Clock Card -->
-      <section class="glass-card clock-card" id="datetime-widget" aria-label="Clock">
-        <div class="clock-time">
-          <span id="time-display">--:--</span>
-          <span class="clock-side">
-            <span class="clock-seconds" id="time-seconds">--</span>
-            <span class="clock-ampm" id="time-ampm">--</span>
-          </span>
-        </div>
-        <div class="clock-date" id="date-display">--</div>
-        <div class="clock-day" id="day-display">--</div>
-        <div class="clock-pill" id="day-phase">
-          <span class="pill-icon" id="day-phase-icon" aria-hidden="true">☀️</span>
-          <span id="day-phase-text">--</span>
-        </div>
-      </section>
-
       <!-- Weather Card -->
       <section class="glass-card weather-card" id="weather-widget" aria-label="Current weather">
         <div class="weather-header">
@@ -85,10 +76,11 @@
             <span class="loc-name" id="weather-location" dir="auto">--</span>
             <span class="loc-chevron" aria-hidden="true">⌄</span>
           </button>
-          <div class="weather-meta">
-            <span class="loc-time" id="weather-time" title="Local time at this location">--:--</span>
-            <span class="weather-updated" id="weather-updated"></span>
-          </div>
+          <span class="loc-time" id="weather-time" title="Local time at this location">--:--</span>
+        </div>
+        <div class="weather-subheader">
+          <span class="weather-date" id="weather-date">--</span>
+          <span class="weather-updated" id="weather-updated"></span>
         </div>
 
         <div class="weather-hero">
@@ -128,6 +120,7 @@
         <div class="hourly" id="hourly-section">
           <div class="section-head">
             <h2 class="section-title" id="hourly-title">Next 24 hours</h2>
+            <span class="next-prayer" id="next-prayer" hidden></span>
             <button class="section-link" id="hourly-reset" type="button" hidden>Back to now</button>
           </div>
           <div class="hourly-strip" id="hourly-strip" role="list" tabindex="0" aria-labelledby="hourly-title"></div>
@@ -149,10 +142,14 @@
   <!-- Top-Right UI Buttons -->
   <div class="ui-controls">
     <button id="btn-sound" class="ui-btn" type="button" aria-label="Rain sound" aria-pressed="false">
-      <span id="sound-toggle" aria-hidden="true">🔇</span>
+      <span id="sound-toggle" class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/></svg></span>
     </button>
-    <button id="btn-fullscreen" class="ui-btn" type="button" aria-label="Enter fullscreen" title="Fullscreen (F)">⛶</button>
-    <button id="btn-settings" class="ui-btn" type="button" aria-label="Settings" aria-controls="panel" aria-expanded="false" title="Settings (P)">⚙</button>
+    <button id="btn-fullscreen" class="ui-btn" type="button" aria-label="Enter fullscreen" title="Fullscreen (F)">
+      <span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></span>
+    </button>
+    <button id="btn-settings" class="ui-btn" type="button" aria-label="Settings" aria-controls="panel" aria-expanded="false" title="Settings (P)">
+      <span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h9M19 6h1M4 12h3M13 12h7M4 18h11M20 18h0"/><circle cx="16" cy="6" r="2.5"/><circle cx="10" cy="12" r="2.5"/><circle cx="17.5" cy="18" r="2.5"/></svg></span>
+    </button>
   </div>
 
   <!-- Settings Panel -->
@@ -169,6 +166,23 @@
         <span id="panel-location" dir="auto">--</span>
         <span class="loc-change-hint">Change</span>
       </button>
+    </div>
+
+    <div class="control-group">
+      <span class="group-label" id="window-label">Window</span>
+      <div class="segmented" role="radiogroup" aria-labelledby="window-label">
+        <button type="button" class="seg-btn active" role="radio" data-window="live" aria-checked="true">Live weather</button>
+        <button type="button" class="seg-btn" role="radio" data-window="rain" aria-checked="false">Always rain</button>
+      </div>
+      <p class="control-hint" id="window-status" aria-live="polite">--</p>
+    </div>
+
+    <div class="control-group">
+      <label class="switch-row" for="prayer-toggle">
+        <span>Prayer times</span>
+        <input type="checkbox" id="prayer-toggle" class="switch" role="switch" checked />
+      </label>
+      <p class="control-hint">Umm al-Qura method, shown in the hourly forecast.</p>
     </div>
 
     <div class="control-group">
