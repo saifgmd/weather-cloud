@@ -37,10 +37,10 @@
 <body>
 
   <!-- Skip Link -->
-  <a href="#panel" class="skip-link">Skip to settings</a>
+  <a href="#panel" class="skip-link" data-i18n="skip">Skip to settings</a>
 
   <!-- Background Image (CORS mode so WebGL can refract it) -->
-  <img id="custom-bg" alt="" crossorigin="anonymous" />
+  <img id="custom-bg" alt="" crossorigin="anonymous" src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" />
 
   <!-- Background Video -->
   <video id="custom-video" class="hidden" muted loop playsinline webkit-playsinline preload="metadata" aria-hidden="true"></video>
@@ -61,7 +61,7 @@
   <!-- Loading Overlay -->
   <div id="loading-overlay" role="status" aria-live="polite">
     <div class="loader-spinner" aria-hidden="true"></div>
-    <span class="loader-text">Loading...</span>
+    <span class="loader-text" data-i18n="loading">Loading...</span>
   </div>
 
   <!-- Widgets -->
@@ -69,14 +69,14 @@
     <div class="widgets-inner">
 
       <!-- Weather Card -->
-      <section class="glass-card weather-card" id="weather-widget" aria-label="Current weather">
+      <section class="glass-card weather-card" id="weather-widget" aria-labelledby="weather-location">
         <div class="weather-header">
-          <button class="loc-btn" id="btn-location" type="button" aria-label="Change location" title="Search city or village (/)">
+          <button class="loc-btn" id="btn-location" type="button" aria-label="Change location" title="Search city or village (/)" data-i18n-title="searchHint">
             <span class="loc-pin" aria-hidden="true">📍</span>
-            <span class="loc-name" id="weather-location" dir="auto">--</span>
+            <span class="loc-name" id="weather-location" dir="ltr">--</span>
             <span class="loc-chevron" aria-hidden="true">⌄</span>
           </button>
-          <span class="loc-time" id="weather-time" title="Local time at this location">--:--</span>
+          <span class="loc-time" id="weather-time" title="Local time at this location" data-i18n-title="localTime">--:--</span>
         </div>
         <div class="weather-subheader">
           <span class="weather-date" id="weather-date">--</span>
@@ -95,33 +95,35 @@
         <div class="weather-hilo" id="weather-hilo"></div>
 
         <div class="weather-stats">
-          <div class="stat-box" title="Humidity">
+          <div class="stat-box" title="Humidity" data-i18n-title="humidity">
             <div class="stat-icon" aria-hidden="true">💧</div>
             <div class="stat-value" id="weather-humidity">--</div>
-            <div class="stat-label">Humidity</div>
+            <div class="stat-label" data-i18n="humidity">Humidity</div>
           </div>
-          <div class="stat-box" title="Wind">
+          <div class="stat-box" title="Wind" data-i18n-title="wind">
             <div class="stat-icon" aria-hidden="true">💨</div>
             <div class="stat-value" id="weather-wind">--</div>
-            <div class="stat-label">Wind</div>
+            <div class="stat-label" data-i18n="wind">Wind</div>
           </div>
-          <div class="stat-box" title="Feels like">
+          <div class="stat-box" title="Feels like" data-i18n-title="feelsLike">
             <div class="stat-icon" aria-hidden="true">🌡️</div>
             <div class="stat-value" id="weather-feels">--</div>
-            <div class="stat-label">Feels</div>
+            <div class="stat-label" data-i18n="feels">Feels</div>
           </div>
           <div class="stat-box" id="weather-uv-box" title="UV index">
             <div class="stat-icon" aria-hidden="true">🔆</div>
             <div class="stat-value" id="weather-uv">--</div>
-            <div class="stat-label">UV</div>
+            <div class="stat-label" data-i18n="uv">UV</div>
           </div>
         </div>
 
+        <p class="rain-alert" id="rain-alert" role="status" hidden></p>
+
         <div class="hourly" id="hourly-section">
           <div class="section-head">
-            <h2 class="section-title" id="hourly-title">Next 24 hours</h2>
+            <h2 class="section-title" id="hourly-title" data-i18n="next24">Next 24 hours</h2>
             <span class="next-prayer" id="next-prayer" hidden></span>
-            <button class="section-link" id="hourly-reset" type="button" hidden>Back to now</button>
+            <button class="section-link" id="hourly-reset" type="button" hidden data-i18n="backToNow">Back to now</button>
           </div>
           <div class="hourly-strip" id="hourly-strip" role="list" tabindex="0" aria-labelledby="hourly-title"></div>
         </div>
@@ -130,8 +132,8 @@
       <!-- 5-Day Forecast Card -->
       <section class="glass-card days-card" id="daily-widget" aria-labelledby="daily-title">
         <div class="section-head">
-          <h2 class="section-title" id="daily-title">5-day forecast</h2>
-          <span class="section-hint" aria-hidden="true">Tap a day for hours</span>
+          <h2 class="section-title" id="daily-title" data-i18n="fiveDay">5-day forecast</h2>
+          <span class="section-hint" aria-hidden="true" data-i18n="tapDay">Tap a day for hours</span>
         </div>
         <div class="daily-list" id="daily-list"></div>
       </section>
@@ -141,128 +143,138 @@
 
   <!-- Top-Right UI Buttons -->
   <div class="ui-controls">
-    <button id="btn-sound" class="ui-btn" type="button" aria-label="Rain sound" aria-pressed="false">
+    <button id="btn-sound" class="ui-btn" type="button" aria-label="Rain sound" aria-pressed="false" data-i18n-aria="soundBtn">
       <span id="sound-toggle" class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/></svg></span>
     </button>
     <button id="btn-fullscreen" class="ui-btn" type="button" aria-label="Enter fullscreen" title="Fullscreen (F)">
       <span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg></span>
     </button>
-    <button id="btn-settings" class="ui-btn" type="button" aria-label="Settings" aria-controls="panel" aria-expanded="false" title="Settings (P)">
+    <button id="btn-settings" class="ui-btn" type="button" aria-label="Settings" aria-controls="panel" aria-expanded="false" title="Settings (P)" data-i18n-aria="settings">
       <span class="ui-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h9M19 6h1M4 12h3M13 12h7M4 18h11M20 18h0"/><circle cx="16" cy="6" r="2.5"/><circle cx="10" cy="12" r="2.5"/><circle cx="17.5" cy="18" r="2.5"/></svg></span>
     </button>
   </div>
 
   <!-- Settings Panel -->
-  <aside id="panel" class="panel" aria-label="Settings" inert>
+  <aside id="panel" class="panel" aria-label="Settings" data-i18n-aria="settings" inert>
     <div class="panel-head">
-      <h2 class="panel-title">Settings</h2>
-      <button id="panel-close" class="panel-close" type="button" aria-label="Close settings">✕</button>
+      <h2 class="panel-title" data-i18n="settings">Settings</h2>
+      <button id="panel-close" class="panel-close" type="button" aria-label="Close settings" data-i18n-aria="closeSettings">✕</button>
     </div>
 
     <div class="control-group">
-      <span class="group-label">Location</span>
+      <span class="group-label" data-i18n="location">Location</span>
       <button id="btn-change-location" type="button" class="wide-btn loc-change">
         <span aria-hidden="true">📍</span>
-        <span id="panel-location" dir="auto">--</span>
-        <span class="loc-change-hint">Change</span>
+        <span id="panel-location" dir="ltr">--</span>
+        <span class="loc-change-hint" data-i18n="change">Change</span>
       </button>
     </div>
 
     <div class="control-group">
-      <span class="group-label" id="window-label">Window</span>
+      <span class="group-label" id="lang-label" data-i18n="language">Language</span>
+      <div class="segmented three" role="radiogroup" aria-labelledby="lang-label">
+        <button type="button" class="seg-btn active" role="radio" data-lang="auto" aria-checked="true" data-i18n="langAuto">Auto</button>
+        <button type="button" class="seg-btn" role="radio" data-lang="ar" aria-checked="false" lang="ar">العربية</button>
+        <button type="button" class="seg-btn" role="radio" data-lang="en" aria-checked="false" lang="en">English</button>
+      </div>
+    </div>
+
+    <div class="control-group">
+      <span class="group-label" id="window-label" data-i18n="window">Window</span>
       <div class="segmented" role="radiogroup" aria-labelledby="window-label">
-        <button type="button" class="seg-btn active" role="radio" data-window="live" aria-checked="true">Live weather</button>
-        <button type="button" class="seg-btn" role="radio" data-window="rain" aria-checked="false">Always rain</button>
+        <button type="button" class="seg-btn active" role="radio" data-window="live" aria-checked="true" data-i18n="live">Live weather</button>
+        <button type="button" class="seg-btn" role="radio" data-window="rain" aria-checked="false" data-i18n="alwaysRain">Always rain</button>
       </div>
       <p class="control-hint" id="window-status" aria-live="polite">--</p>
     </div>
 
     <div class="control-group">
-      <label class="switch-row" for="prayer-toggle">
-        <span>Prayer times</span>
+      <label class="switch-row">
+        <span data-i18n="prayerTimes">Prayer times</span>
         <input type="checkbox" id="prayer-toggle" class="switch" role="switch" checked />
       </label>
-      <p class="control-hint">Umm al-Qura method, shown in the hourly forecast.</p>
+      <p class="control-hint" data-i18n="prayerHint">Umm al-Qura method, shown in the hourly forecast.</p>
     </div>
 
     <div class="control-group">
-      <label for="blur-range">Blur <span id="blur-val" class="value">5px</span></label>
+      <label for="blur-range"><span data-i18n="blur">Blur</span> <span id="blur-val" class="value">5px</span></label>
       <input type="range" id="blur-range" min="0" max="25" value="5" step="1" />
     </div>
 
     <div class="control-group">
-      <label for="brightness-range">Brightness <span id="brightness-val" class="value">30%</span></label>
+      <label for="brightness-range"><span data-i18n="brightness">Brightness</span> <span id="brightness-val" class="value">30%</span></label>
       <input type="range" id="brightness-range" min="20" max="120" value="30" step="1" />
     </div>
 
     <div class="control-group">
-      <label for="rain-range">Rain <span id="rain-val" class="value">70%</span></label>
+      <label for="rain-range"><span data-i18n="rain">Rain</span> <span id="rain-val" class="value">70%</span></label>
       <input type="range" id="rain-range" min="0" max="100" value="70" step="1" />
     </div>
 
     <div class="control-group">
-      <label for="overlay-range">Overlay <span id="overlay-val" class="value">0%</span></label>
+      <label for="overlay-range"><span data-i18n="overlay">Overlay</span> <span id="overlay-val" class="value">0%</span></label>
       <input type="range" id="overlay-range" min="0" max="80" value="0" step="1" />
-      <div class="color-grid" role="radiogroup" aria-label="Overlay color">
-        <button class="color-btn active" data-color="none" type="button" aria-checked="true" role="radio">None</button>
-        <button class="color-btn" data-color="#3b82f6" type="button" aria-checked="false" role="radio"><i class="swatch" style="background:#3b82f6"></i>Blue</button>
-        <button class="color-btn" data-color="#8b5cf6" type="button" aria-checked="false" role="radio"><i class="swatch" style="background:#8b5cf6"></i>Purple</button>
-        <button class="color-btn" data-color="#ef4444" type="button" aria-checked="false" role="radio"><i class="swatch" style="background:#ef4444"></i>Red</button>
-        <button class="color-btn" data-color="#10b981" type="button" aria-checked="false" role="radio"><i class="swatch" style="background:#10b981"></i>Green</button>
-        <button class="color-btn" data-color="#f59e0b" type="button" aria-checked="false" role="radio"><i class="swatch" style="background:#f59e0b"></i>Amber</button>
+      <div class="color-grid" role="radiogroup" aria-label="Overlay color" data-i18n-aria="overlayColor">
+        <button class="color-btn active" data-color="none" type="button" aria-checked="true" role="radio"><span data-i18n="cNone">None</span></button>
+        <button class="color-btn" data-color="#3b82f6" type="button" aria-checked="false" role="radio"><i class="swatch"></i><span data-i18n="cBlue">Blue</span></button>
+        <button class="color-btn" data-color="#8b5cf6" type="button" aria-checked="false" role="radio"><i class="swatch"></i><span data-i18n="cPurple">Purple</span></button>
+        <button class="color-btn" data-color="#ef4444" type="button" aria-checked="false" role="radio"><i class="swatch"></i><span data-i18n="cRed">Red</span></button>
+        <button class="color-btn" data-color="#10b981" type="button" aria-checked="false" role="radio"><i class="swatch"></i><span data-i18n="cGreen">Green</span></button>
+        <button class="color-btn" data-color="#f59e0b" type="button" aria-checked="false" role="radio"><i class="swatch"></i><span data-i18n="cAmber">Amber</span></button>
       </div>
     </div>
 
     <div class="control-group">
-      <label for="volume-range">Volume <span id="volume-val" class="value">50%</span></label>
+      <label for="volume-range"><span data-i18n="volume">Volume</span> <span id="volume-val" class="value">50%</span></label>
       <input type="range" id="volume-range" min="0" max="100" value="50" step="1" />
     </div>
 
     <div class="control-group">
-      <span class="group-label" id="bg-label">Background</span>
+      <span class="group-label" id="bg-label" data-i18n="background">Background</span>
       <div id="preset-grid" class="preset-grid" role="group" aria-labelledby="bg-label"></div>
     </div>
 
     <div class="control-group">
-      <label for="url-input">Custom URL</label>
+      <label for="url-input" data-i18n="customUrl">Custom URL</label>
       <div class="input-row">
-        <input type="url" id="url-input" placeholder="https://example.com/image.jpg" autocomplete="off" />
-        <button id="url-btn" type="button" class="small-btn">Load</button>
+        <input type="url" id="url-input" placeholder="https://example.com/image.jpg" autocomplete="off" dir="ltr" />
+        <button id="url-btn" type="button" class="small-btn" data-i18n="load">Load</button>
       </div>
     </div>
 
     <div class="control-group">
-      <span class="group-label">Upload</span>
+      <span class="group-label" data-i18n="upload">Upload</span>
       <input type="file" id="file-input" accept="image/*,video/*" hidden />
-      <button id="file-btn" type="button" class="wide-btn">Choose File…</button>
+      <button id="file-btn" type="button" class="wide-btn" data-i18n="chooseFile">Choose File…</button>
     </div>
 
     <div class="actions">
-      <button id="btn-share" type="button" class="action-btn">Share</button>
-      <button id="btn-save" type="button" class="action-btn">Save</button>
-      <button id="btn-reset" type="button" class="action-btn danger">Reset</button>
-      <button id="btn-install" type="button" class="action-btn install hidden">Install App</button>
+      <button id="btn-share" type="button" class="action-btn" data-i18n="share">Share</button>
+      <button id="btn-save" type="button" class="action-btn" data-i18n="save">Save</button>
+      <button id="btn-reset" type="button" class="action-btn danger" data-i18n="reset">Reset</button>
+      <button id="btn-install" type="button" class="action-btn install hidden" data-i18n="install">Install App</button>
     </div>
 
     <p class="shortcuts">
-      <kbd>S</kbd> Sound · <kbd>F</kbd> Fullscreen · <kbd>P</kbd> Settings · <kbd>/</kbd> Search
+      <kbd>S</kbd> <span data-i18n="kSound">Sound</span> · <kbd>F</kbd> <span data-i18n="kFull">Fullscreen</span> · <kbd>P</kbd> <span data-i18n="kSettings">Settings</span> · <kbd>/</kbd> <span data-i18n="kSearch">Search</span>
     </p>
 
     <footer class="app-footer">
       <small>
-        <strong>Weather Cloud</strong> — by
+        <strong>Weather Cloud</strong> — <span data-i18n="by">by</span>
         <span class="signature">SAIF G.M.D</span>
       </small>
       <small class="credits">
-        Weather data by <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>
+        <span data-i18n="dataBy">Weather data by</span> <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>
       </small>
+      <small class="credits" id="app-version"></small>
     </footer>
   </aside>
 
   <!-- City / Village Search -->
   <dialog id="search-dialog" class="search-dialog" aria-labelledby="search-title">
     <div class="search-inner">
-      <h2 id="search-title" class="visually-hidden">Search location</h2>
+      <h2 id="search-title" class="visually-hidden" data-i18n="searchTitle">Search location</h2>
       <div class="search-bar">
         <span class="search-icon" aria-hidden="true">🔍</span>
         <input
@@ -270,6 +282,7 @@
           type="search"
           dir="auto"
           placeholder="Search city or village…"
+          data-i18n-ph="searchPh"
           autocomplete="off"
           autocapitalize="off"
           spellcheck="false"
@@ -279,27 +292,28 @@
           aria-expanded="false"
           aria-controls="search-results"
           aria-label="Search city or village"
+          data-i18n-aria="searchPh"
         />
-        <button id="search-close" class="search-close" type="button" aria-label="Close search">✕</button>
+        <button id="search-close" class="search-close" type="button" aria-label="Close search" data-i18n-aria="closeSearch">✕</button>
       </div>
 
       <button id="search-geo" class="search-geo" type="button">
-        <span aria-hidden="true">📍</span> Use my current location
+        <span aria-hidden="true">📍</span> <span data-i18n="myLocation">Use my current location</span>
       </button>
 
       <div class="search-list-head" id="search-list-head" hidden>
         <span id="search-list-title">Recent</span>
-        <button id="search-clear-recents" type="button" class="section-link">Clear</button>
+        <button id="search-clear-recents" type="button" class="section-link" data-i18n="clear">Clear</button>
       </div>
-      <ul id="search-results" class="search-results" role="listbox" aria-label="Locations"></ul>
+      <ul id="search-results" class="search-results" role="listbox" aria-label="Locations" data-i18n-aria="locations"></ul>
 
       <p id="search-status" class="search-status" role="status" aria-live="polite"></p>
 
-      <button id="search-extended" class="search-extended" type="button" hidden>
-        Can't find it? Extended search (OpenStreetMap)
+      <button id="search-extended" class="search-extended" type="button" hidden data-i18n="deepSearch">
+        Still can't find it? Deep search (OpenStreetMap)
       </button>
       <p id="search-attrib" class="search-attrib" hidden>
-        Results © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>
+        <span data-i18n="results">Results</span> © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>
       </p>
     </div>
   </dialog>
