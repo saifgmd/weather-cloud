@@ -1581,7 +1581,8 @@ input[type="range"]::-moz-range-thumb {
 /* ===================== Responsive ===================== */
 @media (max-width: 480px) {
   .widgets-stack {
-    padding: calc(16px + var(--safe-top)) 14px calc(96px + var(--safe-bottom));
+    /* bottom padding = toolbar height (57px) + breathing room */
+    padding: calc(16px + var(--safe-top)) 14px calc(76px + var(--safe-bottom));
   }
   .widgets-inner {
     gap: 14px;
@@ -1616,30 +1617,37 @@ input[type="range"]::-moz-range-thumb {
     gap: 6px;
     padding: 10px 6px;
   }
-  /* Glass dock at the bottom, like an iOS tab bar */
+  /* Bottom toolbar across the full width, like the iPhone Weather app:
+     a frosted bar with the buttons at both ends. Cards scroll under it. */
   .ui-controls {
     top: auto;
-    bottom: calc(14px + var(--safe-bottom));
-    inset-inline-end: auto;
-    left: 50%;
-    transform: translateX(-50%);
-    gap: 4px;
-    padding: 5px;
-    background: rgba(18, 24, 34, 0.62);
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    border-radius: 100px;
+    left: 0;
+    right: 0;
+    bottom: calc(-1 * var(--overscan));
+    inset-inline-end: 0;
+    transform: none;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0;
+    padding: 6px 18px calc(6px + var(--safe-bottom) + var(--overscan));
+    background: rgba(12, 16, 24, 0.55);
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
     backdrop-filter: blur(24px) saturate(160%);
     -webkit-backdrop-filter: blur(24px) saturate(160%);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
   }
   .ui-controls .ui-btn {
-    width: 52px;
+    width: 48px;
     height: 44px;
+    border-radius: 12px;
     background: transparent;
     border-color: transparent;
     box-shadow: none;
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
+  }
+  .ui-controls .ui-btn svg {
+    width: 23px;
+    height: 23px;
   }
   .ui-controls .ui-btn:hover,
   .ui-controls .ui-btn:focus-visible {
@@ -1647,22 +1655,11 @@ input[type="range"]::-moz-range-thumb {
     background: rgba(255, 255, 255, 0.1);
   }
   .ui-controls .ui-btn.active {
-    background: rgba(108, 204, 255, 0.18);
-  }
-  /* Content fades out under the dock instead of colliding with it */
-  body::after {
-    content: "";
-    position: fixed;
-    left: 0;
-    right: 0;
-    bottom: calc(-1 * var(--overscan));
-    height: calc(110px + var(--safe-bottom) + var(--overscan));
-    z-index: 6;
-    pointer-events: none;
-    background: linear-gradient(to bottom, rgba(10, 14, 20, 0), rgba(10, 14, 20, 0.75));
+    background: transparent;
+    color: var(--accent);
   }
   .toast {
-    bottom: calc(86px + var(--safe-bottom));
+    bottom: calc(72px + var(--safe-bottom));
   }
   .panel {
     width: 100%;
