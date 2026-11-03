@@ -4,10 +4,8 @@
  * Version: 1.1.0
  *
  * Strategy
- *  - Pages (navigation): network-first, falls back to the cached app shell
- *    so the app opens offline and updates arrive right away when online.
- *  - Same-origin assets: stale-while-revalidate — instant from cache,
- *    refreshed in the background for the next visit.
+ *  - Our own files (page, app.js, styles…): network-first, so updates arrive
+ *    on the next launch; the cache is the offline fallback.
  *  - Cross-origin requests (weather API, images, audio, video) and range
  *    requests are left to the browser. The app keeps the last forecast in
  *    localStorage for offline use.
@@ -15,7 +13,7 @@
  * Bump CACHE_VERSION on every release to drop old caches.
  * ===================================================================== */
 
-const CACHE_VERSION = "1.3.0";
+const CACHE_VERSION = "1.5.0";
 const CACHE_NAME = `weather-cloud-v${CACHE_VERSION}`;
 
 const APP_SHELL = [
@@ -65,43 +63,34 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return; // third-party: browser default
   if (req.headers.has("range")) return;            // audio/video seeking
 
-  if (req.mode === "navigate") {
-    event.respondWith(networkFirst(req));
-    return;
-  }
-
-  event.respondWith(staleWhileRevalidate(req, event));
+  event.respondWith(networkFirst(req));
 });
 
+/**
+ * Network-first for everything of our own: an update is used on the very
+ * next launch (the page and app.js always match). The cache is only the
+ * offline fallback — or used when the network is too slow to answer.
+ */
 async function networkFirst(req) {
   const cache = await caches.open(CACHE_NAME);
-  try {
-    const res = await fetch(req);
-    if (res && res.ok) cache.put("./index.html", res.clone());
+  const isPage = req.mode === "navigate";
+  const fromCache = () =>
+    cache.match(isPage ? "./index.html" : req, { ignoreSearch: true });
+
+  const network = fetch(req, { cache: "no-cache" }).then((res) => {
+    if (res && res.ok && res.type === "basic") {
+      cache.put(isPage ? "./index.html" : req, res.clone());
+    }
     return res;
-  } catch (err) {
-    return (
-      (await cache.match(req, { ignoreSearch: true })) ||
-      (await cache.match("./index.html")) ||
-      Response.error()
+  });
+
+  try {
+    // Slow connection: after 4 s fall back to the cached copy (if any)
+    const timeout = new Promise((resolve) =>
+      setTimeout(async () => resolve((await fromCache()) || network), 4000)
     );
+    return await Promise.race([network, timeout]);
+  } catch {
+    return (await fromCache()) || Response.error();
   }
-}
-
-async function staleWhileRevalidate(req, event) {
-  const cache = await caches.open(CACHE_NAME);
-  const cached = await cache.match(req, { ignoreSearch: true });
-
-  const network = fetch(req)
-    .then((res) => {
-      if (res && res.ok && res.type === "basic") cache.put(req, res.clone());
-      return res;
-    })
-    .catch(() => null);
-
-  if (cached) {
-    event.waitUntil(network); // refresh in the background
-    return cached;
-  }
-  return (await network) || Response.error();
 }
