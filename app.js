@@ -6,13 +6,13 @@
  *
  *  @project  Weather Cloud
  *  @author   SAIF G.M.D
- *  @version  1.1.0
+ *  @version  1.3.0
  * ===================================================================== */
 
 (function () {
   "use strict";
 
-  const APP_VERSION = "1.1.0";
+  const APP_VERSION = "1.3.0";
 
   // =====================================================================
   // PART 1 — RAINYGLASS ENGINE (Self-contained WebGL raindrops)
@@ -304,8 +304,13 @@
 
     setOptions(partial) {
       Object.assign(this.options, partial);
-      if (this.droplets.length > this.options.maxDroplets) {
-        this.droplets.length = this.options.maxDroplets;
+      // Extra drops fade out naturally instead of vanishing at once
+      const max = this.options.maxDroplets;
+      for (let i = max; i < this.droplets.length; i++) {
+        const d = this.droplets[i];
+        if (d.slides && d.life > d.delay) continue; // already running down the glass
+        d.slides = false;
+        d.ttl = Math.min(d.ttl, d.life + Math.random() * 1.5);
       }
     }
 
@@ -561,6 +566,14 @@
     return `${hh}:${mm} ${h24 >= 12 ? "PM" : "AM"}`;
   }
 
+  // Line icons for the control buttons (emoji render inconsistently across devices)
+  const ICONS = {
+    soundOn: '<svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M18.5 5.5a9 9 0 0 1 0 13"/></svg>',
+    soundOff: '<svg viewBox="0 0 24 24"><path d="M11 5 6 9H3v6h3l5 4V5z"/><path d="m22 9-6 6"/><path d="m16 9 6 6"/></svg>',
+    fsEnter: '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
+    fsExit: '<svg viewBox="0 0 24 24"><path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>'
+  };
+
   const LS_KEYS = {
     settings: "weatherCloudSettings",
     location: "weatherCloudLocation",
@@ -683,7 +696,8 @@
     updateButtonIcon(isFullscreen) {
       const btn = $id("btn-fullscreen");
       if (!btn) return;
-      btn.textContent = isFullscreen ? "✕" : "⛶";
+      const icon = btn.querySelector(".ui-icon");
+      if (icon) icon.innerHTML = isFullscreen ? ICONS.fsExit : ICONS.fsEnter;
       btn.setAttribute("aria-label", isFullscreen ? "Exit fullscreen" : "Enter fullscreen");
       btn.title = isFullscreen ? "Exit fullscreen (F)" : "Fullscreen (F)";
       btn.classList.toggle("active", isFullscreen);
@@ -913,10 +927,12 @@
     soundOn: true,
     currentType: "image",
     currentUrl: PRESETS[0].url,
-    currentPresetIndex: 0
+    currentPresetIndex: 0,
+    windowMode: "live", // "live" = glass follows the real weather, "rain" = always raining
+    prayers: true
   };
 
-  const VISUAL_PROPS = ["blur", "brightness", "rain", "overlayColor", "overlayOpacity"];
+  const VISUAL_PROPS = ["blur", "brightness", "rain", "overlayColor", "overlayOpacity", "windowMode"];
 
   const state = new Proxy(
     { ...DEFAULT_STATE },
@@ -935,12 +951,15 @@
     return c === "none" || /^#[0-9a-f]{6}$/i.test(c || "");
   }
 
-  /** Rain slider (0–100) → drop spawn rate and density. 0 = no rain. */
-  function rainOptions(rain) {
-    const k = Math.max(0, Math.min(100, rain)) / 100;
+  /** Rain amount (0–1) → drop spawn rate and density. 0 = no rain. */
+  function rainOptions(k) {
+    k = Math.max(0, Math.min(1, k));
     return {
       dropletsRate: k === 0 ? 0 : 3 + k * 22,
-      maxDroplets: Math.round(k * MAX_DROPLETS)
+      maxDroplets: Math.round(k * MAX_DROPLETS),
+      minRadius: 5,
+      maxRadius: 22,
+      slideChance: 0.4
     };
   }
 
@@ -999,8 +1018,14 @@
     customBg.style.filter = filter;
     customVideo.style.filter = filter;
     canvas.style.filter = brightness; // drops match the dimmed background
+    // Fog and dust sit on the glass too, so they follow the same brightness
+    const fxBrightness = `brightness(${Math.max(0.35, state.brightness / 100)})`;
+    ["fx-fog", "fx-dust"].forEach((id) => {
+      const el = $id(id);
+      if (el) el.style.filter = fxBrightness;
+    });
 
-    if (rainyGlassInstance) rainyGlassInstance.setOptions(rainOptions(state.rain));
+    WindowScene.refresh();
 
     if (state.overlayColor !== "none" && state.overlayOpacity > 0) {
       colorOverlay.style.backgroundColor = state.overlayColor;
@@ -1020,7 +1045,7 @@
     if (!canvas) return null;
     try {
       rainyGlassInstance = new RainyGlass(canvas, {
-        ...rainOptions(state.rain),
+        ...WindowScene.dropOptions(),
         reducedMotion: reducedMotionQuery.matches
       });
     } catch (err) {
@@ -1177,7 +1202,7 @@
           ? "Mute rain (S)"
           : "Play rain sound (S)";
     }
-    if (soundToggleIcon) soundToggleIcon.textContent = playing ? "🔊" : "🔇";
+    if (soundToggleIcon) soundToggleIcon.innerHTML = playing ? ICONS.soundOn : ICONS.soundOff;
   }
 
   function setSound(on) {
@@ -1236,7 +1261,9 @@
       currentPresetIndex: state.currentPresetIndex,
       // Custom web URLs can be restored; uploaded files (blob:) can't
       customUrl: state.currentPresetIndex === -1 && isValidUrl(state.currentUrl) ? state.currentUrl : "",
-      customType: state.currentType
+      customType: state.currentType,
+      windowMode: state.windowMode,
+      prayers: state.prayers
     };
     if (storeSet(LS_KEYS.settings, saveData)) {
       const note = state.currentPresetIndex === -1 && !saveData.customUrl
@@ -1257,6 +1284,8 @@
     state.overlayOpacity = clampInt(data.overlayOpacity, 0, 80, 0);
     state.overlayColor = isValidOverlayColor(data.overlayColor) ? data.overlayColor : "none";
     state.soundOn = typeof data.soundOn === "boolean" ? data.soundOn : true;
+    state.windowMode = data.windowMode === "rain" ? "rain" : "live";
+    state.prayers = typeof data.prayers === "boolean" ? data.prayers : true;
 
     const idx = clampInt(data.currentPresetIndex, -1, PRESETS.length - 1, 0);
     if (idx === -1 && isValidUrl(data.customUrl)) {
@@ -1326,6 +1355,14 @@
       btn.setAttribute("aria-checked", String(isActive));
     });
 
+    document.querySelectorAll(".seg-btn[data-window]").forEach((btn) => {
+      const on = btn.dataset.window === state.windowMode;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-checked", String(on));
+    });
+    const prayerToggle = $id("prayer-toggle");
+    if (prayerToggle) prayerToggle.checked = !!state.prayers;
+
     updateFilters();
     syncSoundUI();
     AudioManager.setVolume(state.volume / 100);
@@ -1341,6 +1378,8 @@
     params.set("rain", state.rain);
     params.set("volume", state.volume);
     params.set("sound", state.soundOn ? "1" : "0");
+    if (state.windowMode === "rain") params.set("window", "rain");
+    if (!state.prayers) params.set("prayers", "0");
     if (state.overlayColor !== "none") {
       params.set("color", state.overlayColor.replace("#", ""));
       params.set("colorOpacity", state.overlayOpacity);
@@ -1380,6 +1419,15 @@
       state.volume = clampInt(params.get("volume"), 0, 100, DEFAULT_STATE.volume);
       result.hasSettings = true;
     }
+    if (params.has("window")) {
+      state.windowMode = params.get("window") === "rain" ? "rain" : "live";
+      result.hasSettings = true;
+    }
+    if (params.has("prayers")) {
+      state.prayers = params.get("prayers") !== "0";
+      result.hasSettings = true;
+    }
+    result.scene = (params.get("scene") || "").toLowerCase();
     if (params.has("sound")) {
       state.soundOn = params.get("sound") !== "0";
       result.hasSettings = true;
@@ -1545,21 +1593,18 @@
   }
 
   // =====================================================================
-  // PART 24 — CLOCK (device time)
+  // PART 24 — CLOCK (1-second ticker; time & date live in the weather card)
   // =====================================================================
   const Clock = {
-    elTime: $id("time-display"),
-    elSeconds: $id("time-seconds"),
-    elAmPm: $id("time-ampm"),
-    elDate: $id("date-display"),
-    elDay: $id("day-display"),
-    elPhaseIcon: $id("day-phase-icon"),
-    elPhaseText: $id("day-phase-text"),
     timerId: null,
 
     start() {
       this.tick();
-      this.timerId = setInterval(() => this.tick(), 1000);
+      // Align ticks to the start of each second so minutes flip on time
+      setTimeout(() => {
+        this.tick();
+        this.timerId = setInterval(() => this.tick(), 1000);
+      }, 1000 - (Date.now() % 1000));
     },
 
     stop() {
@@ -1567,40 +1612,6 @@
     },
 
     tick() {
-      const now = new Date();
-      const h24 = now.getHours();
-      const hh = String(h24 % 12 || 12).padStart(2, "0");
-      const mm = String(now.getMinutes()).padStart(2, "0");
-      const ss = String(now.getSeconds()).padStart(2, "0");
-
-      if (this.elTime) this.elTime.textContent = `${hh}:${mm}`;
-      if (this.elSeconds) this.elSeconds.textContent = ss;
-      if (this.elAmPm) this.elAmPm.textContent = h24 >= 12 ? "PM" : "AM";
-
-      const month = now.toLocaleString("en-US", { month: "short" });
-      if (this.elDate) this.elDate.textContent = `${now.getDate()} ${month} ${now.getFullYear()}`;
-      if (this.elDay) {
-        this.elDay.textContent = now.toLocaleString("en-US", { weekday: "long" }).toUpperCase();
-      }
-
-      let icon = "🌙";
-      let text = "Night";
-      if (h24 >= 5 && h24 < 7) {
-        icon = "🌅";
-        text = "Dawn";
-      } else if (h24 >= 7 && h24 < 12) {
-        icon = "☀️";
-        text = "Morning";
-      } else if (h24 >= 12 && h24 < 17) {
-        icon = "☀️";
-        text = "Afternoon";
-      } else if (h24 >= 17 && h24 < 20) {
-        icon = "🌇";
-        text = "Evening";
-      }
-      if (this.elPhaseIcon) this.elPhaseIcon.textContent = icon;
-      if (this.elPhaseText) this.elPhaseText.textContent = text;
-
       Weather.tick();
     }
   };
@@ -1848,6 +1859,7 @@
       locBtn: $id("btn-location"),
       locName: $id("weather-location"),
       locTime: $id("weather-time"),
+      locDate: $id("weather-date"),
       updated: $id("weather-updated"),
       temp: $id("weather-temp"),
       icon: $id("weather-icon"),
@@ -1861,6 +1873,7 @@
       hourlySection: $id("hourly-section"),
       hourlyTitle: $id("hourly-title"),
       hourlyReset: $id("hourly-reset"),
+      nextPrayer: $id("next-prayer"),
       hourlyStrip: $id("hourly-strip"),
       dailyList: $id("daily-list"),
       panelLocation: $id("panel-location")
@@ -1956,16 +1969,32 @@
       const url =
         "https://api.open-meteo.com/v1/forecast" +
         `?latitude=${loc.lat}&longitude=${loc.lon}` +
-        "&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,is_day" +
+        "&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m," +
+        "wind_direction_10m,precipitation,is_day" +
         "&hourly=temperature_2m,weather_code,precipitation_probability,is_day,uv_index" +
         "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset" +
         "&timezone=auto&forecast_days=5";
+
+      // Dust for the window effect (optional: failure is ignored)
+      const airUrl =
+        "https://air-quality-api.open-meteo.com/v1/air-quality" +
+        `?latitude=${loc.lat}&longitude=${loc.lon}&current=dust,pm10&timezone=auto`;
+      const airPromise = fetch(airUrl, { signal: controller.signal })
+        .then((r) => (r.ok ? r.json() : null))
+        .catch(() => null);
 
       try {
         const res = await fetch(url, { signal: controller.signal });
         if (!res.ok) throw new Error("Weather fetch failed (" + res.status + ")");
         const data = await res.json();
         if (id !== this.reqId) return; // a newer request (another city) won
+        const air = await airPromise;
+        if (id !== this.reqId) return;
+        if (air && air.current) {
+          data.air = { dust: air.current.dust, pm10: air.current.pm10 };
+        } else if (this.data && this.data.air && this.data.latitude === data.latitude) {
+          data.air = this.data.air; // keep the last known value for this place
+        }
         const at = Date.now();
         storeSet(LS_KEYS.weather, { key: locationKey(loc), at, data });
         this.render(data, at);
@@ -1989,6 +2018,7 @@
       }
       if (e.desc) e.desc.textContent = message;
       if (e.hilo) e.hilo.textContent = "";
+      if (e.nextPrayer) e.nextPrayer.hidden = true;
       ["humidity", "wind", "feels", "uv"].forEach((k) => {
         if (e[k]) e[k].textContent = "--";
       });
@@ -2033,14 +2063,23 @@
 
     /** Called every second by the clock. */
     tick() {
-      if (this.els.locTime) {
-        if (this.data) {
-          const iso = this.cityNowIso();
-          this.els.locTime.textContent = formatTime12(+iso.slice(11, 13), +iso.slice(14, 16));
-        } else {
-          const now = new Date();
-          this.els.locTime.textContent = formatTime12(now.getHours(), now.getMinutes());
-        }
+      // City-local time & date once we know its UTC offset, device time before that
+      const iso = this.cityNowIso();
+      const time = formatTime12(+iso.slice(11, 13), +iso.slice(14, 16));
+      if (this.els.locTime && this.els.locTime.textContent !== time) {
+        this.els.locTime.textContent = time;
+        this.updateNextPrayer();
+      }
+      const dayKey = iso.slice(0, 10);
+      if (this.els.locDate && this.lastDateKey !== dayKey) {
+        this.lastDateKey = dayKey;
+        this.els.locDate.textContent = new Date(dayKey + "T12:00:00Z").toLocaleDateString("en-US", {
+          weekday: "long",
+          day: "numeric",
+          month: "long",
+          year: "numeric",
+          timeZone: "UTC"
+        });
       }
       // Roll the "Now" slot / "Today" row forward as time passes
       if (this.data) {
@@ -2102,6 +2141,7 @@
       this.renderHourly();
       this.renderDaily();
       this.tick();
+      WindowScene.refresh();
     },
 
     selectDay(index) {
@@ -2163,21 +2203,52 @@
         });
       }
 
-      // Sunrise / sunset markers inside the visible window
+      // Sunrise / sunset / prayer markers inside the visible window
       const from = this.selectedDay === null ? this.cityNowIso() : h.time[start];
       const to = h.time[end] || "9999";
       const dl = d.daily || {};
-      [["sunrise", "🌅", "Sunrise"], ["sunset", "🌇", "Sunset"]].forEach(([field, icon, text]) => {
+      const markers = [["sunrise", "🌅", "Sunrise"]];
+      if (!state.prayers) markers.push(["sunset", "🌇", "Sunset"]); // Maghrib marks sunset
+      markers.forEach(([field, icon, text]) => {
         (dl[field] || []).forEach((t) => {
           if (typeof t === "string" && t >= from && t < to) {
             items.push({ key: t, sun: true, label: t.slice(11, 16), icon, text });
           }
         });
       });
+
+      if (state.prayers) {
+        this.prayerList().forEach((p) => {
+          if (p.key < from || p.key >= to) return;
+          // Weather during the hour the prayer falls in
+          const hi = h.time.indexOf(p.key.slice(0, 13) + ":00");
+          if (hi === -1) return;
+          const w = decodeWeather(h.weather_code[hi], h.is_day ? h.is_day[hi] !== 0 : true);
+          items.push({
+            key: p.key,
+            prayer: true,
+            label: p.key.slice(11, 16),
+            name: p.name,
+            icon: w.icon,
+            desc: w.desc,
+            temp: Math.round(h.temperature_2m[hi])
+          });
+        });
+      }
       items.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
       e.hourlyStrip.innerHTML = items
         .map((it) => {
+          if (it.prayer) {
+            return (
+              `<div class="hour-item prayer" role="listitem" ` +
+              `aria-label="${it.name} at ${escapeHtml(it.label)}: ${it.temp}°, ${escapeHtml(it.desc)}">` +
+              `<span class="hour-time">${escapeHtml(it.label)}</span>` +
+              `<span class="hour-icon" aria-hidden="true">${it.icon}</span>` +
+              `<span class="hour-pop prayer-name">${it.name}</span>` +
+              `<span class="hour-temp">${it.temp}°</span></div>`
+            );
+          }
           if (it.sun) {
             return (
               `<div class="hour-item sun" role="listitem" aria-label="${it.text} at ${escapeHtml(it.label)}">` +
@@ -2202,6 +2273,42 @@
         .join("");
 
       if (resetScroll) e.hourlyStrip.scrollLeft = 0;
+      this.updateNextPrayer();
+    },
+
+    /** Prayer times for every forecast day at the current place (memoized). */
+    prayerList() {
+      const d = this.data;
+      if (!d || !d.daily || !d.daily.time || !this.location) return [];
+      const key = `${locationKey(this.location)}|${d.utc_offset_seconds}|${d.daily.time.join(",")}`;
+      if (this._prayerKey !== key) {
+        this._prayerKey = key;
+        this._prayers = PrayerTimes.forDates(
+          d.daily.time,
+          this.location.lat,
+          this.location.lon,
+          (d.utc_offset_seconds || 0) / 3600
+        );
+      }
+      return this._prayers;
+    },
+
+    updateNextPrayer() {
+      const el = this.els.nextPrayer;
+      if (!el) return;
+      const show = state.prayers && this.selectedDay === null && !!this.data;
+      const now = show ? this.cityNowIso() : "";
+      const next = show ? this.prayerList().find((p) => p.key > now) : null;
+      if (!next) {
+        el.hidden = true;
+        return;
+      }
+      const mins = Math.round((Date.parse(next.key + ":00Z") - Date.parse(now + ":00Z")) / 60000);
+      const inText = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
+      const text = `${next.name} ${next.key.slice(11, 16)} · in ${inText}`;
+      if (el.textContent !== text) el.textContent = text;
+      el.title = `Next prayer: ${next.name} at ${next.key.slice(11, 16)}`;
+      el.hidden = false;
     },
 
     renderDaily() {
@@ -2326,6 +2433,449 @@
         dragging = false;
         strip.classList.remove("dragging");
       });
+    }
+  };
+
+  // =====================================================================
+  // PART 26b — PRAYER TIMES (Umm al-Qura, computed on the device)
+  // ---------------------------------------------------------------------
+  // Fajr: sun 18.5° below the horizon · Dhuhr: solar noon
+  // Asr: shadow = object + noon shadow (standard) · Maghrib: sunset
+  // Isha: 90 min after Maghrib (120 min in Ramadan)
+  // Works for any place on Earth; returns city-local "YYYY-MM-DDTHH:MM".
+  // =====================================================================
+  const PrayerTimes = {
+    NAMES: { fajr: "Fajr", dhuhr: "Dhuhr", asr: "Asr", maghrib: "Maghrib", isha: "Isha" },
+
+    rad: (d) => (d * Math.PI) / 180,
+    deg: (r) => (r * 180) / Math.PI,
+    fixAngle(a) {
+      return a - 360 * Math.floor(a / 360);
+    },
+    fixHour(h) {
+      return h - 24 * Math.floor(h / 24);
+    },
+
+    julian(y, m, d) {
+      if (m <= 2) {
+        y -= 1;
+        m += 12;
+      }
+      const A = Math.floor(y / 100);
+      const B = 2 - A + Math.floor(A / 4);
+      return Math.floor(365.25 * (y + 4716)) + Math.floor(30.6001 * (m + 1)) + d + B - 1524.5;
+    },
+
+    /** Sun declination and equation of time for a Julian date. */
+    sun(jd) {
+      const D = jd - 2451545.0;
+      const g = this.fixAngle(357.529 + 0.98560028 * D);
+      const q = this.fixAngle(280.459 + 0.98564736 * D);
+      const L = this.fixAngle(q + 1.915 * Math.sin(this.rad(g)) + 0.02 * Math.sin(this.rad(2 * g)));
+      const e = 23.439 - 0.00000036 * D;
+      const RA = this.deg(Math.atan2(Math.cos(this.rad(e)) * Math.sin(this.rad(L)), Math.cos(this.rad(L)))) / 15;
+      return {
+        decl: this.deg(Math.asin(Math.sin(this.rad(e)) * Math.sin(this.rad(L)))),
+        eqt: q / 15 - this.fixHour(RA)
+      };
+    },
+
+    /** Prayer times (local hours) for one date. NaN when the sun never reaches the angle. */
+    compute(dateStr, lat, lon, tzHours, ramadan) {
+      const [y, m, d] = dateStr.split("-").map(Number);
+      const jd = this.julian(y, m, d) - lon / (15 * 24);
+      const midDay = (t) => this.fixHour(12 - this.sun(jd + t).eqt);
+      const angleTime = (angle, t, ccw) => {
+        const decl = this.sun(jd + t).decl;
+        const c =
+          (-Math.sin(this.rad(angle)) - Math.sin(this.rad(decl)) * Math.sin(this.rad(lat))) /
+          (Math.cos(this.rad(decl)) * Math.cos(this.rad(lat)));
+        if (c < -1 || c > 1) return NaN; // polar day/night
+        const T = this.deg(Math.acos(c)) / 15;
+        return midDay(t) + (ccw ? -T : T);
+      };
+      const asrTime = (t) => {
+        const decl = this.sun(jd + t).decl;
+        const angle = -this.deg(Math.atan(1 / (1 + Math.tan(this.rad(Math.abs(lat - decl))))));
+        return angleTime(angle, t, false);
+      };
+
+      const guess = { fajr: 5, sunrise: 6, dhuhr: 12, asr: 13, maghrib: 18 };
+      let t = { ...guess };
+      for (let i = 0; i < 2; i++) {
+        const f = (k) => (Number.isFinite(t[k]) ? t[k] : guess[k]) / 24;
+        t = {
+          fajr: angleTime(18.5, f("fajr"), true),
+          sunrise: angleTime(0.833, f("sunrise"), true),
+          dhuhr: midDay(f("dhuhr")),
+          asr: asrTime(f("asr")),
+          maghrib: angleTime(0.833, f("maghrib"), false)
+        };
+      }
+      const adj = tzHours - lon / 15;
+      const out = {};
+      Object.keys(t).forEach((k) => {
+        out[k] = t[k] + adj;
+      });
+      out.isha = out.maghrib + (ramadan ? 2 : 1.5);
+      return out;
+    },
+
+    isRamadan(dateStr) {
+      try {
+        const month = new Intl.DateTimeFormat("en-u-ca-islamic-umalqura", {
+          month: "numeric",
+          timeZone: "UTC"
+        }).format(new Date(dateStr + "T12:00:00Z"));
+        return parseInt(month, 10) === 9;
+      } catch {
+        return false;
+      }
+    },
+
+    /** Sorted list of { key: "YYYY-MM-DDTHH:MM", id, name } for the given dates. */
+    forDates(dates, lat, lon, tzHours) {
+      const list = [];
+      dates.forEach((date) => {
+        const times = this.compute(date, lat, lon, tzHours, this.isRamadan(date));
+        const base = Date.parse(date + "T00:00:00Z");
+        Object.keys(this.NAMES).forEach((id) => {
+          const hrs = times[id];
+          if (!Number.isFinite(hrs)) return;
+          const minutes = Math.round(hrs * 60);
+          list.push({
+            key: new Date(base + minutes * 60000).toISOString().slice(0, 16),
+            id,
+            name: this.NAMES[id]
+          });
+        });
+      });
+      return list.sort((a, b) => (a.key < b.key ? -1 : 1));
+    }
+  };
+
+  // =====================================================================
+  // PART 26c — LIVE WINDOW (the glass reacts to the real weather)
+  // ---------------------------------------------------------------------
+  // rain  → drops whose amount follows the real rain (+ lightning in storms)
+  // fog   → condensation on the glass (fog codes or high humidity)
+  // dust  → sandy haze with drifting grains (Open-Meteo air quality: dust)
+  // sun   → dry glass with warm light glare · clear night → soft moonlight
+  // "Always rain" keeps the classic look. ?scene=… previews any scene.
+  // =====================================================================
+  const RAIN_BY_CODE = {
+    51: 0.22, 53: 0.32, 55: 0.42, 56: 0.3, 57: 0.42,
+    61: 0.45, 63: 0.65, 65: 0.9, 66: 0.5, 67: 0.85,
+    80: 0.5, 81: 0.75, 82: 1, 95: 0.85, 96: 0.95, 99: 1
+  };
+
+  const SCENE_PRESETS = {
+    rain: { rain: 0.65 },
+    drizzle: { rain: 0.28, fog: 0.25 },
+    storm: { rain: 1, storm: true },
+    fog: { fog: 0.9 },
+    dust: { dust: 0.85, wind: 35, windDir: 60 },
+    clear: { sun: 1 },
+    night: { moon: 1 },
+    cloudy: {}
+  };
+
+  const DustParticles = {
+    canvas: null,
+    ctx: null,
+    grains: [],
+    target: 0,
+    wind: 20,
+    dir: 0,
+    raf: null,
+    last: 0,
+
+    init(canvas) {
+      this.canvas = canvas;
+      this.ctx = canvas ? canvas.getContext("2d") : null;
+      this.resize();
+      window.addEventListener("resize", debounce(() => this.resize(), 200));
+    },
+
+    resize() {
+      if (!this.canvas) return;
+      this.canvas.width = window.innerWidth;
+      this.canvas.height = window.innerHeight;
+      this.draw(0);
+    },
+
+    set(amount, windKmh, windDir) {
+      if (!this.ctx) return;
+      this.target = Math.round(Math.max(0, Math.min(1, amount)) * 260);
+      this.wind = Number.isFinite(windKmh) ? windKmh : 20;
+      this.dir = Number.isFinite(windDir) ? windDir : 270;
+      while (this.grains.length < this.target) this.grains.push(this.grain(true));
+      if (this.grains.length > this.target) this.grains.length = this.target;
+      if (reducedMotionQuery.matches || !this.target) {
+        this.stop();
+        this.draw(0);
+      } else {
+        this.start();
+      }
+    },
+
+    grain(anywhere) {
+      const w = this.canvas.width;
+      const h = this.canvas.height;
+      return {
+        x: Math.random() * w,
+        y: Math.random() * h,
+        r: 0.6 + Math.random() * 1.8,
+        a: 0.25 + Math.random() * 0.55,
+        s: 0.6 + Math.random() * 0.8,
+        wob: Math.random() * Math.PI * 2,
+        fresh: !anywhere
+      };
+    },
+
+    start() {
+      if (this.raf) return;
+      this.last = performance.now();
+      const loop = (now) => {
+        const dt = Math.min((now - this.last) / 1000, 0.05);
+        this.last = now;
+        if (!document.hidden) this.draw(dt);
+        this.raf = requestAnimationFrame(loop);
+      };
+      this.raf = requestAnimationFrame(loop);
+    },
+
+    stop() {
+      if (this.raf) cancelAnimationFrame(this.raf);
+      this.raf = null;
+    },
+
+    draw(dt) {
+      const { ctx, canvas } = this;
+      if (!ctx) return;
+      const w = canvas.width;
+      const h = canvas.height;
+      ctx.clearRect(0, 0, w, h);
+      // Meteorological direction = where the wind comes FROM; grains move the other way
+      const speed = 25 + this.wind * 5;
+      const vx = -Math.sin(this.dir * Math.PI / 180) * speed;
+      const sign = vx < 0 ? -1 : 1;
+      ctx.fillStyle = "rgb(250, 222, 180)";
+      for (const g of this.grains) {
+        g.wob += dt * 2;
+        g.x += (vx * g.s + sign * 8) * dt;
+        g.y += Math.sin(g.wob) * 6 * dt + 4 * dt;
+        if (g.x < -5) g.x = w + 5;
+        if (g.x > w + 5) g.x = -5;
+        if (g.y > h + 5) g.y = -5;
+        ctx.globalAlpha = g.a;
+        ctx.beginPath();
+        ctx.arc(g.x, g.y, g.r, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+  };
+
+  const WindowScene = {
+    els: {},
+    override: null,
+    scene: null,
+    flashTimer: null,
+    fogKey: "",
+
+    init(override) {
+      this.els = {
+        dust: $id("fx-dust"),
+        fog: $id("fx-fog"),
+        glare: $id("fx-glare"),
+        flash: $id("fx-flash"),
+        status: $id("window-status")
+      };
+      this.override = SCENE_PRESETS[override] ? override : null;
+      DustParticles.init(this.els.dust);
+      window.addEventListener("resize", debounce(() => this.drawFog(), 300));
+      document.addEventListener("visibilitychange", () => this.scheduleFlash());
+    },
+
+    /** Turn the forecast into effect strengths (0–1). */
+    fromWeather(data) {
+      const s = { rain: 0, fog: 0, dust: 0, sun: 0, moon: 0, storm: false };
+      if (!data || !data.current) return s;
+      const c = data.current;
+      const code = c.weather_code;
+      const isDay = c.is_day !== 0;
+      const precip = Number.isFinite(c.precipitation) ? c.precipitation : 0;
+
+      s.rain = Math.max(RAIN_BY_CODE[code] || 0, Math.min(1, precip / 4));
+      s.storm = code >= 95;
+
+      const hum = c.relative_humidity_2m;
+      if (code === 45 || code === 48) s.fog = 0.9;
+      else if (hum >= 93) s.fog = 0.6;
+      else if (hum >= 85) s.fog = 0.3;
+      if ((code >= 71 && code <= 77) || code === 85 || code === 86) s.fog = Math.max(s.fog, 0.7); // frosty glass
+
+      const dust = data.air && Number.isFinite(data.air.dust) ? data.air.dust : 0;
+      s.dust = Math.max(0, Math.min(1, (dust - 50) / 350));
+      s.dustValue = dust;
+
+      if (!s.rain && code <= 2) {
+        const clear = code === 0 ? 1 : code === 1 ? 0.8 : 0.45;
+        if (isDay) s.sun = clear * (1 - s.dust * 0.8);
+        else s.moon = clear * (1 - s.dust * 0.8);
+      }
+      s.wind = c.wind_speed_10m;
+      s.windDir = c.wind_direction_10m;
+      return s;
+    },
+
+    current() {
+      if (this.override) {
+        return { rain: 0, fog: 0, dust: 0, sun: 0, moon: 0, storm: false, wind: 20, windDir: 270, ...SCENE_PRESETS[this.override] };
+      }
+      if (state.windowMode === "rain") {
+        return { rain: state.rain / 100, fog: 0, dust: 0, sun: 0, moon: 0, storm: false, classic: true };
+      }
+      return this.fromWeather(Weather.data);
+    },
+
+    /** RainyGlass options for the current scene. */
+    dropOptions(s = this.current()) {
+      if (s.classic) return rainOptions(s.rain);
+      // In live mode the Rain slider scales the real amount (70% ≈ as-is)
+      const scale = Math.min(1.43, state.rain / 70);
+      // Any real rain should read clearly on the glass: drizzle ≈ 0.5, heavy ≈ 1
+      if (s.rain > 0) return rainOptions(Math.min(1, (0.3 + s.rain * 0.8) * scale));
+      if (s.fog > 0) {
+        // Condensation: many small beads that stay put
+        const k = Math.min(1, s.fog * scale);
+        return {
+          dropletsRate: k === 0 ? 0 : 4 + k * 10,
+          maxDroplets: Math.round(k * 60),
+          minRadius: 2,
+          maxRadius: 7,
+          slideChance: 0
+        };
+      }
+      return { dropletsRate: 0, maxDroplets: 0 }; // dry glass
+    },
+
+    refresh() {
+      const s = this.current();
+      this.scene = s;
+      if (rainyGlassInstance && !rainyGlassInstance.isDestroyed) {
+        rainyGlassInstance.setOptions(this.dropOptions(s));
+      }
+
+      const { fog, dust, glare } = this.els;
+      if (fog) {
+        if (s.fog > 0) this.drawFog();
+        fog.style.opacity = (s.fog * 0.85).toFixed(2);
+      }
+      if (dust) {
+        dust.style.opacity = (s.dust * 0.9).toFixed(2);
+        DustParticles.set(s.dust, s.wind, s.windDir);
+      }
+      if (glare) {
+        const b = Math.min(1, 0.45 + state.brightness / 100);
+        glare.classList.toggle("moon", !s.sun && s.moon > 0);
+        glare.style.opacity = ((s.sun || s.moon * 0.7) * b).toFixed(2);
+      }
+      this.storm = !!s.storm;
+      this.scheduleFlash();
+      this.updateStatus(s);
+    },
+
+    /** Uneven condensation texture, drawn at low resolution (it's blurry anyway). */
+    drawFog() {
+      const c = this.els.fog;
+      if (!c) return;
+      const w = Math.ceil(window.innerWidth / 4);
+      const h = Math.ceil(window.innerHeight / 4);
+      const key = w + "x" + h;
+      if (this.fogKey === key) return;
+      this.fogKey = key;
+      c.width = w;
+      c.height = h;
+      const g = c.getContext("2d");
+      g.clearRect(0, 0, w, h);
+
+      const base = g.createLinearGradient(0, 0, 0, h);
+      base.addColorStop(0, "rgba(214, 226, 238, 0.42)");
+      base.addColorStop(1, "rgba(224, 234, 244, 0.68)");
+      g.fillStyle = base;
+      g.fillRect(0, 0, w, h);
+
+      // Denser patches
+      for (let i = 0; i < 70; i++) {
+        const x = Math.random() * w;
+        const y = Math.random() * h;
+        const r = (0.04 + Math.random() * 0.2) * Math.max(w, h);
+        const grad = g.createRadialGradient(x, y, 0, x, y, r);
+        grad.addColorStop(0, `rgba(238, 244, 250, ${0.08 + Math.random() * 0.18})`);
+        grad.addColorStop(1, "rgba(238, 244, 250, 0)");
+        g.fillStyle = grad;
+        g.fillRect(x - r, y - r, r * 2, r * 2);
+      }
+      // Thinner patches, mostly in the middle
+      g.globalCompositeOperation = "destination-out";
+      for (let i = 0; i < 26; i++) {
+        const x = w * (0.15 + Math.random() * 0.7);
+        const y = h * (0.1 + Math.random() * 0.65);
+        const r = (0.05 + Math.random() * 0.16) * Math.max(w, h);
+        const grad = g.createRadialGradient(x, y, 0, x, y, r);
+        grad.addColorStop(0, `rgba(0, 0, 0, ${0.15 + Math.random() * 0.25})`);
+        grad.addColorStop(1, "rgba(0, 0, 0, 0)");
+        g.fillStyle = grad;
+        g.fillRect(x - r, y - r, r * 2, r * 2);
+      }
+      g.globalCompositeOperation = "source-over";
+    },
+
+    /** Gentle, infrequent lightning during thunderstorms (off with reduced motion). */
+    scheduleFlash() {
+      clearTimeout(this.flashTimer);
+      if (!this.storm || reducedMotionQuery.matches || document.hidden || !this.els.flash) return;
+      this.flashTimer = setTimeout(() => {
+        const el = this.els.flash;
+        if (el.animate) {
+          el.animate(
+            [
+              { opacity: 0 },
+              { opacity: 0.28, offset: 0.08 },
+              { opacity: 0.04, offset: 0.22 },
+              { opacity: 0.2, offset: 0.32 },
+              { opacity: 0 }
+            ],
+            { duration: 900, easing: "ease-out" }
+          );
+        }
+        this.scheduleFlash();
+      }, 7000 + Math.random() * 11000);
+    },
+
+    updateStatus(s) {
+      const el = this.els.status;
+      if (!el) return;
+      let text;
+      if (s.classic) {
+        text = "Always raining, whatever the weather.";
+      } else {
+        const parts = [];
+        if (s.storm) parts.push("Thunderstorm");
+        else if (s.rain >= 0.7) parts.push("Heavy rain");
+        else if (s.rain >= 0.4) parts.push("Rain");
+        else if (s.rain > 0) parts.push("Light rain");
+        if (s.fog >= 0.8) parts.push("fog on the glass");
+        else if (s.fog > 0) parts.push("condensation");
+        if (s.dust > 0) parts.push(s.dust >= 0.5 ? "dusty air" : "light dust");
+        if (!parts.length) parts.push(s.sun ? "Sunny — dry glass" : s.moon ? "Clear night — dry glass" : "Dry glass");
+        const line = parts.join(", ");
+        text = (this.override ? "Preview: " : "Now: ") + line.charAt(0).toUpperCase() + line.slice(1);
+        if (s.dustValue >= 50 && !this.override) text += ` (dust ${Math.round(s.dustValue)} µg/m³)`;
+      }
+      el.textContent = text;
     }
   };
 
@@ -2682,9 +3232,26 @@
     const fromUrl = loadFromUrl();
     if (!fromUrl.hasSettings) loadFromLocalStorage();
 
+    WindowScene.init(fromUrl.scene);
     createPresets();
     applyStateToUI();
     ensureRain();
+
+    // Window: live weather / always rain
+    document.querySelectorAll(".seg-btn[data-window]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.windowMode = btn.dataset.window === "rain" ? "rain" : "live";
+        applyStateToUI();
+      });
+    });
+
+    const prayerToggle = $id("prayer-toggle");
+    if (prayerToggle) {
+      prayerToggle.addEventListener("change", () => {
+        state.prayers = prayerToggle.checked;
+        Weather.renderHourly();
+      });
+    }
 
     if (state.currentPresetIndex >= 0 && state.currentPresetIndex < PRESETS.length) {
       const p = PRESETS[state.currentPresetIndex];
