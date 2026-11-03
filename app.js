@@ -6,13 +6,13 @@
  *
  *  @project  Weather Cloud
  *  @author   SAIF G.M.D
- *  @version  1.5.0
+ *  @version  1.5.2
  * ===================================================================== */
 
 (function () {
   "use strict";
 
-  const APP_VERSION = "1.5.0";
+  const APP_VERSION = "1.5.2";
 
   // =====================================================================
   // PART 1 — RAINYGLASS ENGINE (Self-contained WebGL raindrops)
@@ -3966,6 +3966,36 @@
 
     const versionEl = $id("app-version");
     if (versionEl) versionEl.textContent = t("version", { v: APP_VERSION });
+    // Tap the version 3 times: screen diagnostics (helps with iPhone layout bugs)
+    if (versionEl) {
+      let taps = 0;
+      let tapTimer = null;
+      versionEl.addEventListener("click", () => {
+        taps++;
+        clearTimeout(tapTimer);
+        tapTimer = setTimeout(() => (taps = 0), 800);
+        if (taps < 3) return;
+        taps = 0;
+        const probe = document.createElement("div");
+        probe.style.cssText =
+          "position:fixed;visibility:hidden;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)";
+        document.body.appendChild(probe);
+        const cs = getComputedStyle(probe);
+        const vv = window.visualViewport;
+        const standalone =
+          navigator.standalone === true ||
+          (window.matchMedia && window.matchMedia("(display-mode: standalone)").matches);
+        const info =
+          `v${APP_VERSION} · ${standalone ? "app" : "browser"} · ` +
+          `win ${window.innerWidth}×${window.innerHeight} · ` +
+          `screen ${screen.width}×${screen.height} · ` +
+          `vv ${vv ? Math.round(vv.height) : "-"} · ` +
+          `safe ${parseInt(cs.paddingTop, 10)}/${parseInt(cs.paddingBottom, 10)} · dpr ${window.devicePixelRatio}`;
+        probe.remove();
+        versionEl.textContent = info;
+        versionEl.style.userSelect = "text";
+      });
+    }
 
     // Free uploaded files only when the page is really unloaded (keeps bfcache working)
     window.addEventListener("pagehide", (e) => {
