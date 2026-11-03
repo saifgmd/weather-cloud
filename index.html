@@ -13,7 +13,11 @@
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-title" content="Weather Cloud" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <!-- "black" (not "black-translucent"): on recent iOS the translucent mode
+       makes home-screen apps shorter than the screen, leaving a black band
+       at the bottom. iOS reads this only when the app is added to the
+       home screen, so re-add the app after changing it. -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="black" />
 
   <!-- Social previews (absolute URLs are required by most platforms) -->
   <meta property="og:title" content="Weather Cloud" />
