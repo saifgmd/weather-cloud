@@ -39,6 +39,10 @@
   --transition: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
   --safe-top: env(safe-area-inset-top, 0px);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* Full-screen layers reach past the bottom edge: on iPhone, home-screen
+     apps can report a viewport shorter than the screen (WebKit bug), which
+     left a black band at the bottom. Extra height is simply off-screen. */
+  --overscan: 140px;
 }
 
 html,
@@ -98,9 +102,9 @@ button {
 #custom-bg,
 #custom-video {
   position: fixed;
-  inset: 0;
+  inset: 0 0 auto 0;
   width: 100%;
-  height: 100%;
+  height: calc(100% + var(--overscan));
   object-fit: cover;
   object-position: center;
   transform: scale(1.05);
@@ -124,9 +128,9 @@ button {
    â†’ raindrops â†’ light (glare, lightning) â†’ color overlay â†’ widgets */
 .fx {
   position: fixed;
-  inset: 0;
+  inset: 0 0 auto 0;
   width: 100%;
-  height: 100%;
+  height: calc(100% + var(--overscan));
   pointer-events: none;
   opacity: 0;
   transition: opacity 2s ease;
@@ -144,7 +148,9 @@ button {
 
 #bg-canvas {
   position: fixed;
-  inset: 0;
+  inset: 0 0 auto 0;
+  width: 100%;
+  height: calc(100% + var(--overscan));
   z-index: 3;
   pointer-events: none;
 }
@@ -185,7 +191,8 @@ button {
 
 #color-overlay {
   position: fixed;
-  inset: 0;
+  inset: 0 0 auto 0;
+  height: calc(100% + var(--overscan));
   z-index: 4;
   pointer-events: none;
   opacity: 0;
@@ -196,7 +203,8 @@ button {
 /* ===================== Loading Overlay ===================== */
 #loading-overlay {
   position: fixed;
-  inset: 0;
+  inset: 0 0 calc(-1 * var(--overscan)) 0;
+  padding-bottom: var(--overscan);
   z-index: 9999;
   display: flex;
   flex-direction: column;
@@ -223,6 +231,7 @@ button {
   border-radius: 50%;
   animation: spin 0.9s linear infinite;
 }
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -295,12 +304,7 @@ button {
   color: #fff;
   animation: cardIn 0.8s cubic-bezier(0.2, 0.9, 0.3, 1) both;
 }
-.weather-card {
-  animation-delay: 0.08s;
-}
-.days-card {
-  animation-delay: 0.16s;
-}
+
 
 @keyframes cardIn {
   from {
@@ -352,6 +356,7 @@ button {
 /* ==================== Weather Card ==================== */
 .weather-card {
   padding: 22px 22px 20px;
+  animation-delay: 0.08s;
 }
 
 .weather-header {
@@ -368,7 +373,8 @@ button {
   gap: 6px;
   min-width: 0;
   max-width: 70%;
-  padding: 7px 12px 7px 10px;
+  padding-block: 7px;
+  padding-inline: 10px 12px;
   background: rgba(255, 255, 255, 0.12);
   border: 1px solid var(--tile-border);
   border-radius: 100px;
@@ -460,6 +466,7 @@ button {
 }
 
 .weather-temp-wrap {
+  direction: ltr; /* "21 آ°C" â€” number then unit, in any language */
   display: flex;
   align-items: flex-start;
   gap: 4px;
@@ -545,6 +552,24 @@ button {
 .uv-high { color: #ffb347; }
 .uv-vhigh { color: #ff7b6b; }
 .uv-extreme { color: #d78bff; }
+
+/* ==================== Rain countdown ==================== */
+.rain-alert {
+  margin: -4px 0 16px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 13.5px;
+  font-weight: 600;
+  line-height: 1.35;
+  background: rgba(110, 180, 255, 0.18);
+  border: 1px solid rgba(140, 200, 255, 0.35);
+  color: #d8ecff;
+}
+.rain-alert[data-kind="stop"] {
+  background: rgba(255, 220, 140, 0.14);
+  border-color: rgba(255, 220, 150, 0.32);
+  color: #fff1cf;
+}
 
 /* ==================== Hourly strip ==================== */
 .hourly {
@@ -666,6 +691,7 @@ button {
 /* ==================== 5-day card ==================== */
 .days-card {
   padding: 22px 18px 14px;
+  animation-delay: 0.16s;
 }
 .days-card .section-head {
   padding: 0 6px;
@@ -688,7 +714,7 @@ button {
   border-top: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 12px;
   cursor: pointer;
-  text-align: left;
+  text-align: start;
   transition: background var(--transition);
 }
 .day-row:first-child {
@@ -732,7 +758,7 @@ button {
 .day-max {
   font-size: 15px;
   font-weight: 600;
-  text-align: right;
+  text-align: end;
   font-variant-numeric: tabular-nums;
 }
 .day-min {
@@ -769,7 +795,7 @@ button {
 .ui-controls {
   position: fixed;
   top: calc(24px + var(--safe-top));
-  right: 24px;
+  inset-inline-end: 24px;
   z-index: 20;
   display: flex;
   gap: 10px;
@@ -961,6 +987,10 @@ input[type="range"]::-moz-range-thumb {
   border-radius: 10px;
 }
 
+.segmented.three {
+  grid-template-columns: repeat(3, 1fr);
+}
+
 .seg-btn {
   padding: 9px 6px;
   background: transparent;
@@ -1051,6 +1081,12 @@ input[type="range"]::-moz-range-thumb {
   font-weight: 600;
 }
 
+.color-btn[data-color="#3b82f6"] .swatch { background: #3b82f6; }
+.color-btn[data-color="#8b5cf6"] .swatch { background: #8b5cf6; }
+.color-btn[data-color="#ef4444"] .swatch { background: #ef4444; }
+.color-btn[data-color="#10b981"] .swatch { background: #10b981; }
+.color-btn[data-color="#f59e0b"] .swatch { background: #f59e0b; }
+
 .swatch {
   width: 9px;
   height: 9px;
@@ -1104,7 +1140,7 @@ input[type="range"]::-moz-range-thumb {
   content: "â–¶";
   position: absolute;
   top: 6px;
-  right: 6px;
+  inset-inline-end: 6px;
   width: 18px;
   height: 18px;
   background: rgba(0, 0, 0, 0.7);
@@ -1163,7 +1199,7 @@ input[type="range"]::-moz-range-thumb {
   display: flex;
   align-items: center;
   gap: 8px;
-  text-align: left;
+  text-align: start;
   color: var(--text-primary);
   font-size: 13px;
 }
@@ -1328,7 +1364,8 @@ input[type="range"]::-moz-range-thumb {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 6px 4px 14px;
+  padding-block: 4px;
+  padding-inline: 14px 6px;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 14px;
@@ -1393,7 +1430,7 @@ input[type="range"]::-moz-range-thumb {
   font-size: 14px;
   font-weight: 600;
   cursor: pointer;
-  text-align: left;
+  text-align: start;
   transition: background var(--transition);
 }
 .search-geo:hover {
@@ -1583,8 +1620,9 @@ input[type="range"]::-moz-range-thumb {
   .ui-controls {
     top: auto;
     bottom: calc(14px + var(--safe-bottom));
-    right: 50%;
-    transform: translateX(50%);
+    inset-inline-end: auto;
+    left: 50%;
+    transform: translateX(-50%);
     gap: 4px;
     padding: 5px;
     background: rgba(18, 24, 34, 0.62);
@@ -1617,8 +1655,8 @@ input[type="range"]::-moz-range-thumb {
     position: fixed;
     left: 0;
     right: 0;
-    bottom: 0;
-    height: calc(110px + var(--safe-bottom));
+    bottom: calc(-1 * var(--overscan));
+    height: calc(110px + var(--safe-bottom) + var(--overscan));
     z-index: 6;
     pointer-events: none;
     background: linear-gradient(to bottom, rgba(10, 14, 20, 0), rgba(10, 14, 20, 0.75));
@@ -1663,4 +1701,68 @@ input[type="range"]::-moz-range-thumb {
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* =====================================================================
+ * Arabic / right-to-left
+ * ===================================================================== */
+
+/* Letter-spacing breaks Arabic letter joining */
+html[lang="ar"] body * {
+  letter-spacing: 0 !important;
+}
+
+html[lang="ar"] body {
+  font-family: system-ui, -apple-system, "SF Arabic", "Segoe UI", "Noto Sans Arabic", "Geeza Pro", Tahoma, sans-serif;
+}
+
+/* Hourly strip fades out on the reading end */
+[dir="rtl"] .hourly-strip {
+  -webkit-mask-image: linear-gradient(270deg, #000 88%, transparent);
+  mask-image: linear-gradient(270deg, #000 88%, transparent);
+}
+
+/* 5-day bars: cold on the right, hot on the left */
+[dir="rtl"] .day-bar-fill {
+  clip-path: inset(0 var(--l, 0%) 0 var(--r, 0%) round 3px);
+}
+[dir="rtl"] .day-row {
+  grid-template-columns: 68px 46px 34px minmax(40px, 1fr) 34px;
+}
+
+/* Toggle switch moves the other way */
+[dir="rtl"] .switch::after {
+  left: auto;
+  right: 2px;
+}
+[dir="rtl"] .switch:checked::after {
+  transform: translateX(-18px);
+}
+
+/* Side panel opens from the left on wide screens */
+@media (min-width: 481px) {
+  [dir="rtl"] .panel {
+    right: auto;
+    left: 0;
+    border-left: none;
+    border-right: 1px solid var(--border-subtle);
+    box-shadow: 20px 0 60px rgba(0, 0, 0, 0.5);
+    transform: translateX(-110%);
+  }
+  [dir="rtl"] .panel.open {
+    transform: translateX(0);
+  }
+}
+
+@media (max-width: 480px) {
+  [dir="rtl"] .day-row {
+    grid-template-columns: 62px 40px 30px minmax(36px, 1fr) 30px;
+  }
+}
+
+/* Skip link sits on the right */
+[dir="rtl"] .skip-link {
+  left: auto;
+  right: 0;
+  border-radius: 0 0 0 10px;
 }
