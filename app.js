@@ -6,13 +6,13 @@
  *
  *  @project  Weather Cloud
  *  @author   SAIF G.M.D
- *  @version  1.3.0
+ *  @version  1.5.0
  * ===================================================================== */
 
 (function () {
   "use strict";
 
-  const APP_VERSION = "1.3.0";
+  const APP_VERSION = "1.5.0";
 
   // =====================================================================
   // PART 1 — RAINYGLASS ENGINE (Self-contained WebGL raindrops)
@@ -330,12 +330,11 @@
     }
 
     resize() {
-      const w = window.innerWidth;
-      const h = window.innerHeight;
+      // Size comes from CSS (full screen + overscan for the iOS home-screen bug)
+      const w = this.canvas.clientWidth || window.innerWidth;
+      const h = this.canvas.clientHeight || window.innerHeight;
       this.canvas.width = Math.floor(w * this.dpr);
       this.canvas.height = Math.floor(h * this.dpr);
-      this.canvas.style.width = w + "px";
-      this.canvas.style.height = h + "px";
       this._updateCover();
     }
 
@@ -542,6 +541,10 @@
     return /\.(mp4|webm|ogg|mov)(\?|#|$)/i.test(url);
   }
 
+  function cap(str) {
+    return str ? str.charAt(0).toUpperCase() + str.slice(1) : str;
+  }
+
   function escapeHtml(str) {
     return String(str).replace(/[&<>"']/g, (c) => ({
       "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
@@ -551,7 +554,7 @@
   function createEl(tag, className, text) {
     const el = document.createElement(tag);
     if (className) el.className = className;
-    if (text != null) el.textContent = text;
+    if (text !== null && text !== undefined) el.textContent = text;
     return el;
   }
 
@@ -563,7 +566,7 @@
   function formatTime12(h24, m) {
     const hh = String(h24 % 12 || 12).padStart(2, "0");
     const mm = String(m).padStart(2, "0");
-    return `${hh}:${mm} ${h24 >= 12 ? "PM" : "AM"}`;
+    return `${hh}:${mm} ${h24 >= 12 ? I18n.t("pm") : I18n.t("am")}`;
   }
 
   // Line icons for the control buttons (emoji render inconsistently across devices)
@@ -609,10 +612,323 @@
     ? window.matchMedia("(prefers-reduced-motion: reduce)")
     : { matches: false };
 
-  const LANG = (() => {
-    const l = (navigator.language || "en").slice(0, 2).toLowerCase();
-    return /^[a-z]{2}$/.test(l) ? l : "en";
-  })();
+  // =====================================================================
+  // PART 2b — LANGUAGE (Arabic / English, follows the device by default)
+  // ---------------------------------------------------------------------
+  // Numbers always use Western digits (26°, 05:03) for quick reading.
+  // Static HTML texts use data-i18n / data-i18n-aria / data-i18n-title /
+  // data-i18n-ph attributes; everything else calls t("key", {vars}).
+  // =====================================================================
+  const STRINGS = {
+    en: {
+      am: "AM", pm: "PM",
+      // static UI
+      skip: "Skip to settings", loading: "Loading...",
+      changeLocation: "Change location", searchHint: "Search city or village (/)",
+      localTime: "Local time at this location",
+      humidity: "Humidity", wind: "Wind", feels: "Feels", uv: "UV", feelsLike: "Feels like", uvIndex: "UV index",
+      next24: "Next 24 hours", backToNow: "Back to now",
+      fiveDay: "5-day forecast", tapDay: "Tap a day for hours",
+      soundBtn: "Rain sound", settings: "Settings", closeSettings: "Close settings",
+      location: "Location", change: "Change",
+      window: "Window", live: "Live weather", alwaysRain: "Always rain",
+      prayerTimes: "Prayer times", prayerHint: "Umm al-Qura method, shown in the hourly forecast.",
+      language: "Language", langAuto: "Auto",
+      blur: "Blur", brightness: "Brightness", rain: "Rain", overlay: "Overlay", overlayColor: "Overlay color",
+      cNone: "None", cBlue: "Blue", cPurple: "Purple", cRed: "Red", cGreen: "Green", cAmber: "Amber",
+      volume: "Volume", background: "Background", customUrl: "Custom URL", load: "Load",
+      upload: "Upload", chooseFile: "Choose File…",
+      share: "Share", save: "Save", reset: "Reset", install: "Install App",
+      kSound: "Sound", kFull: "Fullscreen", kSettings: "Settings", kSearch: "Search",
+      by: "by", dataBy: "Weather data by",
+      searchTitle: "Search location", searchPh: "Search city or village…", closeSearch: "Close search",
+      myLocation: "Use my current location", clear: "Clear", locations: "Locations",
+      deepSearch: "Still can't find it? Deep search (OpenStreetMap)",
+      // presets
+      City: "City", Forest: "Forest", Mountain: "Mountain", Towers: "Towers", Future: "Future", Sky: "Sky",
+      Hurricane: "Hurricane", River: "River", Beach: "Beach", image: "image", video: "video",
+      // messages
+      fsUnsupported: "Fullscreen not supported", fsEnter: "Enter fullscreen", fsExit: "Exit fullscreen",
+      fsEnterTitle: "Fullscreen (F)", fsExitTitle: "Exit fullscreen (F)",
+      installed: "App installed!", installNo: "App is already installed or not supported",
+      loadingImage: "Loading image...", loadingVideo: "Loading video...", buffering: "Buffering...",
+      tapVideo: "Tap to start video", videoNoPlay: "Video could not play",
+      imageFail: "Image could not be loaded", videoFail: "Video could not be loaded",
+      soundNA: "Rain sound unavailable", soundMute: "Mute rain (S)", soundPlay: "Play rain sound (S)",
+      audioNA: "Audio not available", tapSound: "Tap anywhere to enable sound",
+      saved: "Settings saved", savedNoUpload: "Settings saved (uploaded files aren't kept)",
+      saveFail: "Could not save settings", resetDone: "Reset to defaults",
+      resetConfirm: "Reset all settings to defaults?",
+      copied: "Link copied!", copyFail: "Copy failed",
+      enterUrl: "Please enter a URL", badUrl: "Invalid or unsafe URL", tooLarge: "File too large (max 50MB)",
+      version: "Version {v}",
+      // places
+      sharedLocation: "Shared location", myPlace: "My Location", unknownPlace: "Unknown place",
+      locAria: "Location: {x}. Change location",
+      // weather card
+      loadingWx: "Loading…", wxUnavailable: "Weather unavailable",
+      updated: "Updated {ago}", offline: "Offline · {ago}", justNow: "just now",
+      hilo: "H: {h}   L: {l}", kmh: "km/h",
+      uvLow: "Low", uvMod: "Moderate", uvHigh: "High", uvVHigh: "Very high", uvExt: "Extreme",
+      uvAria: "UV index {uv}, {label}",
+      now: "Now", today: "Today", sunrise: "Sunrise", sunset: "Sunset",
+      p_fajr: "Fajr", p_dhuhr: "Dhuhr", p_asr: "Asr", p_maghrib: "Maghrib", p_isha: "Isha",
+      prayerAria: "{name} at {time}: {temp}°, {desc}", sunAria: "{text} at {time}",
+      popAria: ", {pop}% chance of rain",
+      nextPrayer: "{name} {time} · in {in}", nextPrayerTitle: "Next prayer: {name} at {time}",
+      dayAria: "{day}: {desc}, low {lo}°, high {hi}°{pop}. Show hourly forecast",
+      // rain countdown
+      rLight: "Light rain", rRain: "Rain", rHeavy: "Heavy rain",
+      rContinues: "Rain continues for the next few hours",
+      rStopsIn: "Rain stops in about {m} min",
+      rStartsNow: "{w} starting now", rStartsIn: "{w} starts in about {m} min",
+      rLikelyContinue: "Rain likely to continue for the next few hours",
+      rEaseHour: "Rain should ease within the hour", rEaseAt: "Rain should ease around {t}",
+      rLikelyHour: "{w} likely within the hour", rExpected: "{w} expected around {t} ({p} chance)",
+      // window status
+      wAlways: "Always raining, whatever the weather.", wNow: "Now: {x}", wPreview: "Preview: {x}",
+      wStorm: "Thunderstorm", wHeavy: "Heavy rain", wRain: "Rain", wLight: "Light rain",
+      wFog: "fog on the glass", wCond: "condensation", wDusty: "dusty air", wDust: "light dust",
+      wSunny: "Sunny — dry glass", wNight: "Clear night — dry glass", wDry: "Dry glass",
+      wDustVal: " (dust {v} µg/m³)", listSep: ", ",
+      // search
+      recent: "Recent", results: "Results", extResults: "Extended results",
+      typeHint: "Type a city, town or village name",
+      searching: "Searching…", searchingOsm: "Searching OpenStreetMap…",
+      villageDown: " · village search didn't respond",
+      villageDownEmpty: "Village search didn't respond — try the deep search below.",
+      noPlaces: "No places found. Check the spelling or try another name.",
+      noResults: "No results — try the extended search below.",
+      searchFail: "Search failed — check your connection.",
+      locating: "Locating…",
+      geo1: "Location permission denied. Allow it in your browser settings, or search instead.",
+      geo2: "Your location is unavailable right now.", geo3: "Locating timed out. Try again.",
+      geoX: "Could not get your location."
+    },
+    ar: {
+      am: "ص", pm: "م",
+      skip: "انتقل إلى الإعدادات", loading: "جارٍ التحميل…",
+      changeLocation: "تغيير الموقع", searchHint: "ابحث عن مدينة أو قرية (/)",
+      localTime: "الوقت المحلي في هذا الموقع",
+      humidity: "الرطوبة", wind: "الرياح", feels: "الإحساس", uv: "الأشعة", feelsLike: "درجة الإحساس",
+      uvIndex: "مؤشر الأشعة فوق البنفسجية",
+      next24: "الساعات الـ 24 القادمة", backToNow: "العودة للآن",
+      fiveDay: "توقعات 5 أيام", tapDay: "اضغط يوماً لعرض ساعاته",
+      soundBtn: "صوت المطر", settings: "الإعدادات", closeSettings: "إغلاق الإعدادات",
+      location: "الموقع", change: "تغيير",
+      window: "النافذة", live: "الطقس الحي", alwaysRain: "مطر دائم",
+      prayerTimes: "أوقات الصلاة", prayerHint: "بطريقة أم القرى، وتظهر في توقعات الساعات.",
+      language: "اللغة", langAuto: "تلقائي",
+      blur: "التمويه", brightness: "السطوع", rain: "المطر", overlay: "طبقة لونية", overlayColor: "لون الطبقة",
+      cNone: "بدون", cBlue: "أزرق", cPurple: "بنفسجي", cRed: "أحمر", cGreen: "أخضر", cAmber: "كهرماني",
+      volume: "مستوى الصوت", background: "الخلفية", customUrl: "رابط مخصص", load: "تحميل",
+      upload: "رفع ملف", chooseFile: "اختر ملفاً…",
+      share: "مشاركة", save: "حفظ", reset: "إعادة ضبط", install: "تثبيت التطبيق",
+      kSound: "الصوت", kFull: "ملء الشاشة", kSettings: "الإعدادات", kSearch: "البحث",
+      by: "تطوير", dataBy: "بيانات الطقس من",
+      searchTitle: "البحث عن موقع", searchPh: "ابحث عن مدينة أو قرية…", closeSearch: "إغلاق البحث",
+      myLocation: "استخدم موقعي الحالي", clear: "مسح", locations: "المواقع",
+      deepSearch: "لم تجده؟ بحث عميق (OpenStreetMap)",
+      City: "مدينة", Forest: "غابة", Mountain: "جبل", Towers: "أبراج", Future: "مستقبل", Sky: "سماء",
+      Hurricane: "إعصار", River: "نهر", Beach: "شاطئ", image: "صورة", video: "فيديو",
+      fsUnsupported: "ملء الشاشة غير مدعوم", fsEnter: "ملء الشاشة", fsExit: "الخروج من ملء الشاشة",
+      fsEnterTitle: "ملء الشاشة (F)", fsExitTitle: "الخروج من ملء الشاشة (F)",
+      installed: "تم تثبيت التطبيق!", installNo: "التطبيق مثبّت مسبقاً أو غير مدعوم",
+      loadingImage: "جارٍ تحميل الصورة…", loadingVideo: "جارٍ تحميل الفيديو…", buffering: "جارٍ التحميل…",
+      tapVideo: "اضغط لتشغيل الفيديو", videoNoPlay: "تعذّر تشغيل الفيديو",
+      imageFail: "تعذّر تحميل الصورة", videoFail: "تعذّر تحميل الفيديو",
+      soundNA: "صوت المطر غير متاح", soundMute: "إيقاف صوت المطر (S)", soundPlay: "تشغيل صوت المطر (S)",
+      audioNA: "الصوت غير متاح", tapSound: "اضغط في أي مكان لتفعيل الصوت",
+      saved: "تم حفظ الإعدادات", savedNoUpload: "تم الحفظ (الملفات المرفوعة لا تُحفظ)",
+      saveFail: "تعذّر حفظ الإعدادات", resetDone: "تمت إعادة الضبط",
+      resetConfirm: "إعادة كل الإعدادات إلى الوضع الافتراضي؟",
+      copied: "تم نسخ الرابط!", copyFail: "تعذّر النسخ",
+      enterUrl: "أدخل رابطاً", badUrl: "رابط غير صالح أو غير آمن", tooLarge: "الملف كبير جداً (الحد 50 ميجابايت)",
+      version: "الإصدار {v}",
+      sharedLocation: "موقع مشترك", myPlace: "موقعي", unknownPlace: "مكان غير معروف",
+      locAria: "الموقع: {x}. تغيير الموقع",
+      loadingWx: "جارٍ التحميل…", wxUnavailable: "الطقس غير متاح",
+      updated: "حُدّث {ago}", offline: "دون اتصال · {ago}", justNow: "الآن",
+      hilo: "العظمى: {h}   الصغرى: {l}", kmh: "كم/س",
+      uvLow: "منخفض", uvMod: "متوسط", uvHigh: "مرتفع", uvVHigh: "مرتفع جداً", uvExt: "شديد",
+      uvAria: "مؤشر الأشعة فوق البنفسجية {uv}، {label}",
+      now: "الآن", today: "اليوم", sunrise: "الشروق", sunset: "الغروب",
+      p_fajr: "الفجر", p_dhuhr: "الظهر", p_asr: "العصر", p_maghrib: "المغرب", p_isha: "العشاء",
+      prayerAria: "{name} الساعة {time}: {temp}°، {desc}", sunAria: "{text} الساعة {time}",
+      popAria: "، احتمال المطر {pop}%",
+      nextPrayer: "{name} {time} · بعد {in}", nextPrayerTitle: "الصلاة القادمة: {name} الساعة {time}",
+      dayAria: "{day}: {desc}، الصغرى {lo}°، العظمى {hi}°{pop}. عرض توقعات الساعات",
+      rLight: "مطر خفيف", rRain: "مطر", rHeavy: "مطر غزير",
+      rContinues: "المطر مستمر خلال الساعات القادمة",
+      rStopsIn: "يتوقف المطر بعد {m} تقريباً",
+      rStartsNow: "{w} يبدأ الآن", rStartsIn: "{w} يبدأ بعد {m} تقريباً",
+      rLikelyContinue: "يُرجّح استمرار المطر خلال الساعات القادمة",
+      rEaseHour: "يُتوقع أن يخف المطر خلال الساعة", rEaseAt: "يُتوقع أن يخف المطر نحو {t}",
+      rLikelyHour: "{w} محتمل خلال الساعة", rExpected: "{w} متوقع نحو {t} (احتمال {p})",
+      wAlways: "المطر دائم مهما كان الطقس.", wNow: "الآن: {x}", wPreview: "معاينة: {x}",
+      wStorm: "عاصفة رعدية", wHeavy: "مطر غزير", wRain: "مطر", wLight: "مطر خفيف",
+      wFog: "ضباب على الزجاج", wCond: "بخار على الزجاج", wDusty: "غبار كثيف", wDust: "غبار خفيف",
+      wSunny: "مشمس — زجاج جاف", wNight: "ليل صافٍ — زجاج جاف", wDry: "زجاج جاف",
+      wDustVal: " (غبار {v} ميكروغرام/م³)", listSep: "، ",
+      recent: "الأخيرة", results: "النتائج", extResults: "نتائج البحث العميق",
+      typeHint: "اكتب اسم مدينة أو قرية",
+      searching: "جارٍ البحث…", searchingOsm: "جارٍ البحث في OpenStreetMap…",
+      villageDown: " · بحث القرى لم يستجب",
+      villageDownEmpty: "بحث القرى لم يستجب — جرّب البحث العميق بالأسفل.",
+      noPlaces: "لم يُعثر على أماكن. تأكد من الكتابة أو جرّب اسماً آخر.",
+      noResults: "لا توجد نتائج — جرّب البحث العميق بالأسفل.",
+      searchFail: "فشل البحث — تحقق من الاتصال.",
+      locating: "جارٍ تحديد موقعك…",
+      geo1: "تم رفض إذن الموقع. فعّله من إعدادات المتصفح، أو ابحث عن مدينتك.",
+      geo2: "موقعك غير متاح حالياً.", geo3: "انتهت مهلة تحديد الموقع. حاول مرة أخرى.",
+      geoX: "تعذّر تحديد موقعك."
+    }
+  };
+
+  // Weather descriptions (icons stay in WEATHER_CODES)
+  const WEATHER_AR = {
+    0: "سماء صافية", 1: "صحو غالباً", 2: "غائم جزئياً", 3: "غائم",
+    45: "ضباب", 48: "ضباب متجمّد",
+    51: "رذاذ خفيف", 53: "رذاذ متوسط", 55: "رذاذ كثيف", 56: "رذاذ متجمّد", 57: "رذاذ متجمّد كثيف",
+    61: "مطر خفيف", 63: "مطر متوسط", 65: "مطر غزير", 66: "مطر متجمّد", 67: "مطر متجمّد غزير",
+    71: "ثلج خفيف", 73: "ثلج متوسط", 75: "ثلج كثيف", 77: "حبيبات ثلجية",
+    80: "زخات مطر", 81: "زخات غزيرة", 82: "زخات عنيفة", 85: "زخات ثلجية", 86: "زخات ثلجية كثيفة",
+    95: "عاصفة رعدية", 96: "عاصفة رعدية مع بَرَد", 99: "عاصفة رعدية شديدة"
+  };
+
+  const I18n = {
+    pref: "auto", // "auto" | "ar" | "en"
+    lang: "en",
+
+    detect() {
+      const list = navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || "en"];
+      return String(list[0] || "en").toLowerCase().startsWith("ar") ? "ar" : "en";
+    },
+
+    init(urlLang) {
+      let saved = null;
+      try {
+        saved = localStorage.getItem("weatherCloudLang");
+      } catch {}
+      const pick = urlLang || saved;
+      this.pref = pick === "ar" || pick === "en" ? pick : "auto";
+      this.lang = this.pref === "auto" ? this.detect() : this.pref;
+      this.applyDocument();
+    },
+
+    setPref(pref) {
+      this.pref = pref === "ar" || pref === "en" ? pref : "auto";
+      try {
+        localStorage.setItem("weatherCloudLang", this.pref);
+      } catch {}
+      this.lang = this.pref === "auto" ? this.detect() : this.pref;
+      this.applyDocument();
+    },
+
+    get rtl() {
+      return this.lang === "ar";
+    },
+
+    /** Locale for Intl: Gregorian calendar + Western digits in both languages. */
+    get locale() {
+      return this.lang === "ar" ? "ar-u-ca-gregory-nu-latn" : "en-US";
+    },
+
+    /** Language code for the geocoding APIs. */
+    get apiLang() {
+      return this.lang;
+    },
+
+    t(key, vars) {
+      const table = STRINGS[this.lang] || STRINGS.en;
+      let s = key in table ? table[key] : key in STRINGS.en ? STRINGS.en[key] : key;
+      if (vars) s = s.replace(/\{(\w+)\}/g, (m, k) => (k in vars ? vars[k] : m));
+      return s;
+    },
+
+    /** Arabic counted nouns: 1 دقيقة · 2 دقيقتين · 3–10 دقائق · 11+ دقيقة */
+    count(n, unit) {
+      if (this.lang !== "ar") {
+        const en = { min: "min", hour: "h", day: "d", result: n === 1 ? "result" : "results" };
+        return `${n} ${en[unit]}`;
+      }
+      const ar = {
+        min: ["دقيقة", "دقيقتين", "دقائق", "دقيقة"],
+        hour: ["ساعة", "ساعتين", "ساعات", "ساعة"],
+        day: ["يوم", "يومين", "أيام", "يوماً"],
+        result: ["نتيجة واحدة", "نتيجتان", "نتائج", "نتيجة"]
+      }[unit];
+      if (n === 1) return ar[0];
+      if (n === 2) return ar[1];
+      if (n >= 3 && n <= 10) return `${n} ${ar[2]}`;
+      return `${n} ${ar[3]}`;
+    },
+
+    /** Short duration for "next prayer": 41m / 1h 20m · 41د / 1س 20د */
+    duration(mins) {
+      const h = Math.floor(mins / 60);
+      const m = mins % 60;
+      if (this.lang === "ar") return h ? `${h}س ${m}د` : `${m}د`;
+      return h ? `${h}h ${m}m` : `${m}m`;
+    },
+
+    date(dateStr, opts) {
+      return new Date(dateStr + "T12:00:00Z").toLocaleDateString(this.locale, { timeZone: "UTC", ...opts });
+    },
+
+    hijri(dateStr, withYear = false) {
+      try {
+        return new Date(dateStr + "T12:00:00Z").toLocaleDateString("ar-u-ca-islamic-umalqura-nu-latn", {
+          day: "numeric",
+          month: "long",
+          ...(withYear ? { year: "numeric" } : {}),
+          timeZone: "UTC"
+        });
+      } catch {
+        return "";
+      }
+    },
+
+    applyDocument() {
+      const root = document.documentElement;
+      root.lang = this.lang;
+      root.dir = this.rtl ? "rtl" : "ltr";
+    },
+
+    /** Translate the static HTML. */
+    apply() {
+      document.querySelectorAll("[data-i18n]").forEach((el) => {
+        el.textContent = this.t(el.dataset.i18n);
+      });
+      document.querySelectorAll("[data-i18n-aria]").forEach((el) => {
+        el.setAttribute("aria-label", this.t(el.dataset.i18nAria));
+      });
+      document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+        el.title = this.t(el.dataset.i18nTitle);
+      });
+      document.querySelectorAll("[data-i18n-ph]").forEach((el) => {
+        el.placeholder = this.t(el.dataset.i18nPh);
+      });
+      document.querySelectorAll(".seg-btn[data-lang]").forEach((btn) => {
+        const on = btn.dataset.lang === this.pref;
+        btn.classList.toggle("active", on);
+        btn.setAttribute("aria-checked", String(on));
+      });
+      ["weather-location", "panel-location"].forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.dir = this.rtl ? "rtl" : "ltr";
+      });
+    }
+  };
+  const t = (key, vars) => I18n.t(key, vars);
+
+  /** Keep "36°" / "70%" in one piece inside Arabic sentences. A number that
+   *  follows Arabic letters becomes an "Arabic number" for the bidi algorithm
+   *  and the °/% sign would jump to its left ("°36"). LRI…PDI isolates it. */
+  function ltr(str) {
+    return I18n.rtl ? "\u2066" + str + "\u2069" : str;
+  }
+
 
   // =====================================================================
   // PART 3 — DEVICE DETECTION
@@ -659,7 +975,7 @@
         element.mozRequestFullScreen ||
         element.msRequestFullscreen;
       if (!requestMethod) {
-        showToast("Fullscreen not supported", "error");
+        showToast(t("fsUnsupported"), "error");
         return Promise.resolve();
       }
       try {
@@ -698,8 +1014,8 @@
       if (!btn) return;
       const icon = btn.querySelector(".ui-icon");
       if (icon) icon.innerHTML = isFullscreen ? ICONS.fsExit : ICONS.fsEnter;
-      btn.setAttribute("aria-label", isFullscreen ? "Exit fullscreen" : "Enter fullscreen");
-      btn.title = isFullscreen ? "Exit fullscreen (F)" : "Fullscreen (F)";
+      btn.setAttribute("aria-label", isFullscreen ? t("fsExit") : t("fsEnter"));
+      btn.title = isFullscreen ? t("fsExitTitle") : t("fsEnterTitle");
       btn.classList.toggle("active", isFullscreen);
     },
     init() {
@@ -870,13 +1186,13 @@
       window.addEventListener("appinstalled", () => {
         this.deferredPrompt = null;
         if (this.installButton) this.installButton.classList.add("hidden");
-        showToast("App installed!", "success");
+        showToast(t("installed"), "success");
       });
     },
 
     async promptInstall() {
       if (!this.deferredPrompt) {
-        showToast("App is already installed or not supported", "info");
+        showToast(t("installNo"), "info");
         return;
       }
       this.deferredPrompt.prompt();
@@ -924,7 +1240,7 @@
     overlayColor: "none",
     overlayOpacity: 0,
     volume: 50,
-    soundOn: true,
+    soundOn: false, // never start sound by surprise; the user turns it on
     currentType: "image",
     currentUrl: PRESETS[0].url,
     currentPresetIndex: 0,
@@ -994,7 +1310,7 @@
   }
 
   let loaderTimer = null;
-  function showLoader(text = "Loading...", delay = 0) {
+  function showLoader(text = t("loading"), delay = 0) {
     if (!loadingOverlay) return;
     clearTimeout(loaderTimer);
     const run = () => {
@@ -1087,7 +1403,7 @@
     ResourceManager.releaseExcept(url);
 
     if (type === "video") {
-      showLoader("Loading video...");
+      showLoader(t("loadingVideo"));
       customBg.classList.add("hidden");
       customVideo.classList.remove("hidden");
 
@@ -1112,10 +1428,10 @@
             hideLoader();
             attachRainSource(customVideo);
             if (error.name === "NotAllowedError") {
-              showToast("Tap to start video", "info");
+              showToast(t("tapVideo"), "info");
               document.addEventListener("click", () => customVideo.play().catch(() => {}), { once: true });
             } else if (error.name !== "AbortError") {
-              showToast("Video could not play", "error");
+              showToast(t("videoNoPlay"), "error");
             }
           });
       };
@@ -1123,7 +1439,7 @@
       if (customVideo.readyState >= 3) playVideo();
       else customVideo.addEventListener("canplay", playVideo, { once: true });
     } else {
-      showLoader("Loading image...");
+      showLoader(t("loadingImage"));
       customVideo.pause();
       customVideo.removeAttribute("src");
       customVideo.load(); // release the previous video
@@ -1150,7 +1466,7 @@
           return;
         }
         hideLoader();
-        showToast("Image could not be loaded", "error");
+        showToast(t("imageFail"), "error");
         if (presetIndex !== 0) {
           setBackground(PRESETS[0].url, PRESETS[0].type, 0);
         } else {
@@ -1178,12 +1494,12 @@
     customVideo.addEventListener("error", () => {
       if (state.currentType !== "video" || !customVideo.getAttribute("src")) return;
       hideLoader();
-      showToast("Video could not be loaded", "error");
+      showToast(t("videoFail"), "error");
       if (state.currentPresetIndex !== 0) setBackground(PRESETS[0].url, PRESETS[0].type, 0);
     });
     // Only show the overlay if buffering lasts a while
     customVideo.addEventListener("waiting", () => {
-      if (state.currentType === "video") showLoader("Buffering...", 800);
+      if (state.currentType === "video") showLoader(t("buffering"), 800);
     });
     customVideo.addEventListener("playing", hideLoader);
   }
@@ -1196,11 +1512,7 @@
     if (soundBtn) {
       soundBtn.classList.toggle("active", playing);
       soundBtn.setAttribute("aria-pressed", String(playing));
-      soundBtn.title = AudioManager.failed
-        ? "Rain sound unavailable"
-        : playing
-          ? "Mute rain (S)"
-          : "Play rain sound (S)";
+      soundBtn.title = AudioManager.failed ? t("soundNA") : playing ? t("soundMute") : t("soundPlay");
     }
     if (soundToggleIcon) soundToggleIcon.innerHTML = playing ? ICONS.soundOn : ICONS.soundOff;
   }
@@ -1215,12 +1527,12 @@
     if (AudioManager.failed) {
       state.soundOn = false;
       syncSoundUI();
-      showToast("Audio not available", "info");
+      showToast(t("audioNA"), "info");
       return;
     }
     AudioManager.setVolume(state.volume / 100);
     AudioManager.play().catch((err) => {
-      if (err && err.name === "NotAllowedError") showToast("Tap anywhere to enable sound", "info");
+      if (err && err.name === "NotAllowedError") showToast(t("tapSound"), "info");
       syncSoundUI();
     });
   }
@@ -1266,12 +1578,10 @@
       prayers: state.prayers
     };
     if (storeSet(LS_KEYS.settings, saveData)) {
-      const note = state.currentPresetIndex === -1 && !saveData.customUrl
-        ? "Settings saved (uploaded files aren't kept)"
-        : "Settings saved";
+      const note = state.currentPresetIndex === -1 && !saveData.customUrl ? t("savedNoUpload") : t("saved");
       showToast(note, "success");
     } else {
-      showToast("Could not save settings", "error");
+      showToast(t("saveFail"), "error");
     }
   }
 
@@ -1283,7 +1593,7 @@
     state.volume = clampInt(data.volume, 0, 100, DEFAULT_STATE.volume);
     state.overlayOpacity = clampInt(data.overlayOpacity, 0, 80, 0);
     state.overlayColor = isValidOverlayColor(data.overlayColor) ? data.overlayColor : "none";
-    state.soundOn = typeof data.soundOn === "boolean" ? data.soundOn : true;
+    state.soundOn = typeof data.soundOn === "boolean" ? data.soundOn : false;
     state.windowMode = data.windowMode === "rain" ? "rain" : "live";
     state.prayers = typeof data.prayers === "boolean" ? data.prayers : true;
 
@@ -1316,7 +1626,7 @@
     storeRemove(LS_KEYS.settings);
     setBackground(PRESETS[0].url, PRESETS[0].type, 0);
     setSound(state.soundOn);
-    showToast("Reset to defaults", "success");
+    showToast(t("resetDone"), "success");
   }
 
   // =====================================================================
@@ -1461,7 +1771,7 @@
     }
     if (params.has("lat") && params.has("lon")) {
       result.location = normalizeLocation({
-        name: params.get("place") || "Shared location",
+        name: params.get("place") || t("sharedLocation"),
         cc: params.get("cc") || "",
         lat: params.get("lat"),
         lon: params.get("lon"),
@@ -1487,7 +1797,7 @@
     if (navigator.clipboard && window.isSecureContext) {
       navigator.clipboard
         .writeText(text)
-        .then(() => showToast("Link copied!", "success"))
+        .then(() => showToast(t("copied"), "success"))
         .catch(() => fallbackCopy(text));
     } else {
       fallbackCopy(text);
@@ -1501,9 +1811,9 @@
     input.select();
     try {
       document.execCommand("copy");
-      showToast("Link copied!", "success");
+      showToast(t("copied"), "success");
     } catch {
-      showToast("Copy failed", "error");
+      showToast(t("copyFail"), "error");
     }
     document.body.removeChild(input);
   }
@@ -1569,9 +1879,9 @@
       const item = document.createElement("button");
       item.type = "button";
       item.className = "preset-item" + (preset.type === "video" ? " video" : "");
-      item.dataset.label = preset.label;
+      item.dataset.label = t(preset.label);
       item.style.backgroundImage = `url("${preset.thumb}")`;
-      item.setAttribute("aria-label", `${preset.label} (${preset.type})`);
+      item.setAttribute("aria-label", `${t(preset.label)} (${t(preset.type)})`);
       item.addEventListener("click", () => setBackground(preset.url, preset.type, index));
       presetGrid.appendChild(item);
     });
@@ -1628,6 +1938,13 @@
     source: "default"
   };
 
+  /** The default city, named in the interface language. */
+  function defaultLocation() {
+    return I18n.lang === "ar"
+      ? { ...DEFAULT_LOCATION, name: "جدة", sub: "منطقة مكة المكرمة، السعودية" }
+      : { ...DEFAULT_LOCATION };
+  }
+
   function cleanText(v, max = 80) {
     return typeof v === "string" ? v.trim().slice(0, max) : "";
   }
@@ -1641,7 +1958,7 @@
     }
     const cc = cleanText(o.cc, 2).toUpperCase();
     return {
-      name: cleanText(o.name) || "Unknown place",
+      name: cleanText(o.name) || t("unknownPlace"),
       sub: cleanText(o.sub, 160),
       cc: /^[A-Z]{2}$/.test(cc) ? cc : "",
       lat: +lat.toFixed(4),
@@ -1654,8 +1971,11 @@
     return `${(+loc.lat).toFixed(2)},${(+loc.lon).toFixed(2)}`;
   }
 
+  /** Name + country code. The name is wrapped in Unicode isolates (FSI…PDI)
+   *  so Arabic names don't flip the order: "جدة, SA", not "SA ,جدة". */
   function locationLabel(loc) {
-    return loc.cc ? `${loc.name}, ${loc.cc}` : loc.name;
+    const name = "\u2068" + loc.name + "\u2069";
+    return loc.cc ? `${name}${t("listSep")}${loc.cc}` : name;
   }
 
   function uniqueParts(parts, exclude) {
@@ -1666,6 +1986,30 @@
       seen.add(k);
       return true;
     });
+  }
+
+  /** Loose name matching: ignores case, Arabic diacritics and letter variants. */
+  function normalizeName(str) {
+    return String(str || "")
+      .toLowerCase()
+      .normalize("NFKD")
+      .replace(/[\u0300-\u036f\u064B-\u065F\u0670\u0640]/g, "") // accents, tashkeel, tatweel
+      .replace(/[أإآٱ]/g, "ا")
+      .replace(/ة/g, "ه")
+      .replace(/ى/g, "ي")
+      .replace(/^(ال|al[\s-]|el[\s-])/, "")
+      .replace(/[\s\-'’]+/g, " ")
+      .trim();
+  }
+
+  function distanceKm(a, b) {
+    const R = 6371;
+    const dLat = ((b.lat - a.lat) * Math.PI) / 180;
+    const dLon = ((b.lon - a.lon) * Math.PI) / 180;
+    const x =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos((a.lat * Math.PI) / 180) * Math.cos((b.lat * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(x));
   }
 
   const Recents = {
@@ -1690,7 +2034,7 @@
     async search(query, signal) {
       const url =
         "https://geocoding-api.open-meteo.com/v1/search" +
-        `?name=${encodeURIComponent(query)}&count=10&language=${LANG}&format=json`;
+        `?name=${encodeURIComponent(query)}&count=10&language=${I18n.apiLang}&format=json`;
       const res = await fetch(url, { signal });
       if (!res.ok) throw new Error("Search failed (" + res.status + ")");
       const data = await res.json();
@@ -1698,7 +2042,7 @@
         .map((r) =>
           normalizeLocation({
             name: r.name,
-            sub: uniqueParts([r.admin2, r.admin1, r.country], r.name).join(", "),
+            sub: uniqueParts([r.admin2, r.admin1, r.country], r.name).join(t("listSep")),
             cc: r.country_code,
             lat: r.latitude,
             lon: r.longitude,
@@ -1706,6 +2050,78 @@
           })
         )
         .filter(Boolean);
+    },
+
+    /** Photon (komoot, OpenStreetMap data): made for search-as-you-type and
+     *  covers small villages and hamlets. Biased toward `near` so places close
+     *  to the user rank first, like the iPhone Weather app. */
+    async searchPhoton(query, signal, near) {
+      const lang = I18n.apiLang === "en" ? "en" : "default"; // default = local (Arabic) names
+      let url =
+        "https://photon.komoot.io/api/" +
+        `?q=${encodeURIComponent(query)}&limit=10&lang=${lang}&osm_tag=place`;
+      if (near) url += `&lat=${near.lat}&lon=${near.lon}`;
+      const res = await fetch(url, { signal });
+      if (!res.ok) throw new Error("Photon failed (" + res.status + ")");
+      const data = await res.json();
+      const skip = new Set(["city_block", "plot", "square", "house"]);
+      return (data.features || [])
+        .filter((f) => f && f.properties && f.geometry && !skip.has(f.properties.osm_value))
+        .map((f) => {
+          const p = f.properties;
+          const [lon, lat] = f.geometry.coordinates || [];
+          return normalizeLocation({
+            name: p.name,
+            sub: uniqueParts([p.county || p.city || p.district, p.state, p.country], p.name).join(t("listSep")),
+            cc: p.countrycode,
+            lat,
+            lon,
+            source: "search",
+            osm: true
+          });
+        })
+        .filter((loc) => loc && loc.name !== t("unknownPlace"));
+    },
+
+    /** Both sources at once: GeoNames (big places, ranked by population) and
+     *  Photon (villages). Merged, de-duplicated, best name matches first. */
+    async searchAll(query, signal, near) {
+      const TIMEOUT = Symbol("timeout");
+      const [a, b] = await Promise.allSettled([
+        this.search(query, signal),
+        Promise.race([
+          this.searchPhoton(query, signal, near),
+          new Promise((resolve) => setTimeout(() => resolve(TIMEOUT), 4500))
+        ])
+      ]);
+      if (signal && signal.aborted) throw new DOMException("Aborted", "AbortError");
+      // Remember which source answered, so the dialog can say so
+      this.lastOsmStatus =
+        b.status === "rejected" ? "error" : b.value === TIMEOUT ? "timeout" : "ok";
+      if (b.status === "rejected") console.warn("Village search (Photon) failed:", b.reason);
+      const geo = a.status === "fulfilled" ? a.value : [];
+      const osm = b.status === "fulfilled" && Array.isArray(b.value) ? b.value : [];
+      if (a.status === "rejected" && b.status === "rejected") throw a.reason;
+      osm.forEach((loc) => (loc.osm = true));
+
+      const q = normalizeName(query);
+      const merged = [];
+      [...geo, ...osm].forEach((loc) => {
+        const n = normalizeName(loc.name);
+        const dup = merged.some(
+          (m) => m.cc === loc.cc && normalizeName(m.name) === n && distanceKm(m, loc) < 20
+        );
+        if (!dup) merged.push(loc);
+      });
+      const rank = (loc) => {
+        const n = normalizeName(loc.name);
+        return n === q ? 0 : n.startsWith(q) ? 1 : n.includes(q) ? 2 : 3;
+      };
+      return merged
+        .map((loc, i) => ({ loc, i, r: rank(loc) }))
+        .sort((x, y) => x.r - y.r || x.i - y.i)
+        .slice(0, 12)
+        .map((x) => x.loc);
     },
 
     /** OpenStreetMap Nominatim: covers small villages. Max 1 request/second,
@@ -1717,7 +2133,7 @@
       this.lastExtended = Date.now();
       const url =
         "https://nominatim.openstreetmap.org/search" +
-        `?q=${encodeURIComponent(query)}&format=jsonv2&limit=10&addressdetails=1&accept-language=${LANG}`;
+        `?q=${encodeURIComponent(query)}&format=jsonv2&limit=10&addressdetails=1&accept-language=${I18n.apiLang}`;
       const res = await fetch(url, { signal });
       if (!res.ok) throw new Error("Search failed (" + res.status + ")");
       const data = await res.json();
@@ -1731,7 +2147,7 @@
             sub: uniqueParts(
               [a.county || a.state_district || a.city, a.state || a.region, a.country],
               name
-            ).join(", "),
+            ).join(t("listSep")),
             cc: a.country_code,
             lat: r.lat,
             lon: r.lon,
@@ -1745,19 +2161,19 @@
     async reverse(lat, lon) {
       try {
         const res = await fetch(
-          `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=${LANG}`
+          `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lon}&localityLanguage=${I18n.apiLang}`
         );
         if (!res.ok) throw new Error("Reverse geocode failed");
         const d = await res.json();
-        const name = d.city || d.locality || d.principalSubdivision || d.countryName || "My Location";
+        const name = d.city || d.locality || d.principalSubdivision || d.countryName || t("myPlace");
         return {
           name,
-          sub: uniqueParts([d.principalSubdivision, d.countryName], name).join(", "),
+          sub: uniqueParts([d.principalSubdivision, d.countryName], name).join(t("listSep")),
           cc: d.countryCode || ""
         };
       } catch (err) {
         console.warn("Reverse geocoding failed:", err.message);
-        return { name: "My Location", sub: "", cc: "" };
+        return { name: t("myPlace"), sub: "", cc: "" };
       }
     },
 
@@ -1812,16 +2228,16 @@
 
   function decodeWeather(code, isDay = true) {
     const e = WEATHER_CODES[code];
-    if (!e) return { icon: "🌡️", desc: "Unknown" };
-    return { icon: isDay ? e[0] : e[1], desc: e[2] };
+    if (!e) return { icon: "🌡️", desc: I18n.lang === "ar" ? "غير معروف" : "Unknown" };
+    return { icon: isDay ? e[0] : e[1], desc: I18n.lang === "ar" ? WEATHER_AR[code] || e[2] : e[2] };
   }
 
   function uvLevel(uv) {
-    if (uv < 3) return ["Low", "uv-low"];
-    if (uv < 6) return ["Moderate", "uv-mod"];
-    if (uv < 8) return ["High", "uv-high"];
-    if (uv < 11) return ["Very high", "uv-vhigh"];
-    return ["Extreme", "uv-extreme"];
+    if (uv < 3) return [t("uvLow"), "uv-low"];
+    if (uv < 6) return [t("uvMod"), "uv-mod"];
+    if (uv < 8) return [t("uvHigh"), "uv-high"];
+    if (uv < 11) return [t("uvVHigh"), "uv-vhigh"];
+    return [t("uvExt"), "uv-extreme"];
   }
 
   // Temperature → color for the 5-day range bars
@@ -1849,7 +2265,7 @@
 
   function tempGradient(min, max) {
     const stops = [0, 0.25, 0.5, 0.75, 1].map((k) => tempColor(min + (max - min) * k));
-    return `linear-gradient(90deg, ${stops.join(", ")})`;
+    return `linear-gradient(${I18n.rtl ? "270deg" : "90deg"}, ${stops.join(", ")})`;
   }
 
   const WEATHER_REFRESH_MS = 15 * 60 * 1000;
@@ -1870,6 +2286,7 @@
       feels: $id("weather-feels"),
       uv: $id("weather-uv"),
       uvBox: $id("weather-uv-box"),
+      rainAlert: $id("rain-alert"),
       hourlySection: $id("hourly-section"),
       hourlyTitle: $id("hourly-title"),
       hourlyReset: $id("hourly-reset"),
@@ -1889,7 +2306,7 @@
 
     init(sharedLocation) {
       const saved = normalizeLocation(storeGet(LS_KEYS.location));
-      const initial = sharedLocation || saved || DEFAULT_LOCATION;
+      const initial = sharedLocation || saved || defaultLocation();
       this.setLocation(initial, { save: false });
 
       // Auto-detect only when permission was already granted (no surprise prompt)
@@ -1939,7 +2356,7 @@
         this.render(cached.data, cached.at || 0);
       } else {
         this.data = null;
-        this.renderEmpty("Loading…");
+        this.renderEmpty(t("loadingWx"));
       }
       this.refresh();
     },
@@ -1949,7 +2366,7 @@
       const label = locationLabel(loc);
       if (this.els.locName) this.els.locName.textContent = label;
       if (this.els.locBtn) {
-        this.els.locBtn.setAttribute("aria-label", `Location: ${label}. Change location`);
+        this.els.locBtn.setAttribute("aria-label", t("locAria", { x: label }));
         this.els.locBtn.title = loc.sub ? `${loc.name} — ${loc.sub}` : loc.name;
       }
       if (this.els.panelLocation) this.els.panelLocation.textContent = label;
@@ -1971,7 +2388,8 @@
         `?latitude=${loc.lat}&longitude=${loc.lon}` +
         "&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m," +
         "wind_direction_10m,precipitation,is_day" +
-        "&hourly=temperature_2m,weather_code,precipitation_probability,is_day,uv_index" +
+        "&hourly=temperature_2m,weather_code,precipitation_probability,precipitation,is_day,uv_index" +
+        "&minutely_15=precipitation" +
         "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset" +
         "&timezone=auto&forecast_days=5";
 
@@ -2004,7 +2422,7 @@
         if (this.data) {
           this.setUpdated(this.dataAt, true);
         } else {
-          this.renderEmpty("Weather unavailable");
+          this.renderEmpty(t("wxUnavailable"));
         }
       }
     },
@@ -2027,15 +2445,24 @@
       if (e.updated) e.updated.textContent = "";
     },
 
+    /** Relative time ("Updated 5 min ago") so it never mixes the device's
+     *  clock with the city's clock shown next to it. */
     setUpdated(at, offline = false) {
+      this.updatedOffline = offline;
       if (!this.els.updated) return;
       if (!at) {
         this.els.updated.textContent = "";
         return;
       }
-      const d = new Date(at);
-      const t = formatTime12(d.getHours(), d.getMinutes());
-      this.els.updated.textContent = offline ? `Offline · ${t}` : `Updated ${t}`;
+      const mins = Math.max(0, Math.floor((Date.now() - at) / 60000));
+      let ago;
+      const unit = (n, u) => (I18n.lang === "ar" ? `قبل ${I18n.count(n, u)}` : `${I18n.count(n, u)} ago`);
+      if (mins < 1) ago = t("justNow");
+      else if (mins < 60) ago = unit(mins, "min");
+      else if (mins < 1440) ago = unit(Math.floor(mins / 60), "hour");
+      else ago = unit(Math.floor(mins / 1440), "day");
+      const text = offline ? t("offline", { ago }) : t("updated", { ago });
+      if (this.els.updated.textContent !== text) this.els.updated.textContent = text;
       this.els.updated.classList.toggle("offline", offline);
     },
 
@@ -2069,17 +2496,23 @@
       if (this.els.locTime && this.els.locTime.textContent !== time) {
         this.els.locTime.textContent = time;
         this.updateNextPrayer();
+        this.renderRainAlert();
+        if (this.dataAt) this.setUpdated(this.dataAt, this.updatedOffline);
       }
       const dayKey = iso.slice(0, 10);
       if (this.els.locDate && this.lastDateKey !== dayKey) {
         this.lastDateKey = dayKey;
-        this.els.locDate.textContent = new Date(dayKey + "T12:00:00Z").toLocaleDateString("en-US", {
-          weekday: "long",
-          day: "numeric",
-          month: "long",
-          year: "numeric",
-          timeZone: "UTC"
-        });
+        const full = I18n.date(dayKey, { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+        if (I18n.lang === "ar") {
+          // "الثلاثاء، 3 نوفمبر · 12 جمادى الأولى" (years in the tooltip)
+          const hijri = I18n.hijri(dayKey);
+          this.els.locDate.textContent =
+            I18n.date(dayKey, { weekday: "long", day: "numeric", month: "long" }) + (hijri ? ` · ${hijri}` : "");
+          this.els.locDate.title = full + (hijri ? ` · ${I18n.hijri(dayKey, true)}` : "");
+        } else {
+          this.els.locDate.textContent = full;
+          this.els.locDate.title = "";
+        }
       }
       // Roll the "Now" slot / "Today" row forward as time passes
       if (this.data) {
@@ -2110,14 +2543,16 @@
       }
       if (e.desc) e.desc.textContent = info.desc;
       if (e.humidity) e.humidity.textContent = Math.round(cur.relative_humidity_2m) + "%";
-      if (e.wind) e.wind.textContent = Math.round(cur.wind_speed_10m) + " km/h";
+      if (e.wind) e.wind.textContent = Math.round(cur.wind_speed_10m) + " " + t("kmh");
       if (e.feels) e.feels.textContent = Math.round(cur.apparent_temperature) + "°";
 
       const daily = data.daily;
       const ti = this.todayIndex();
       if (e.hilo && daily && daily.temperature_2m_max) {
-        e.hilo.textContent =
-          `H: ${Math.round(daily.temperature_2m_max[ti])}°   L: ${Math.round(daily.temperature_2m_min[ti])}°`;
+        e.hilo.textContent = t("hilo", {
+          h: ltr(Math.round(daily.temperature_2m_max[ti]) + "°"),
+          l: ltr(Math.round(daily.temperature_2m_min[ti]) + "°")
+        });
       }
 
       const hi = this.nowHourIndex();
@@ -2128,8 +2563,8 @@
           const [label, cls] = uvLevel(uv);
           e.uv.textContent = uv;
           e.uv.className = "stat-value " + cls;
-          if (e.uvBox) e.uvBox.setAttribute("aria-label", `UV index ${uv}, ${label}`);
-          if (e.uvBox) e.uvBox.title = `UV index: ${label}`;
+          if (e.uvBox) e.uvBox.setAttribute("aria-label", t("uvAria", { uv, label }));
+          if (e.uvBox) e.uvBox.title = `${t("uvIndex")}: ${label}`;
         } else {
           e.uv.textContent = "--";
           e.uv.className = "stat-value";
@@ -2168,7 +2603,7 @@
       const nowIdx = this.nowHourIndex();
       if (this.selectedDay === null) {
         start = Math.max(0, nowIdx);
-        title = "Next 24 hours";
+        title = t("next24");
       } else {
         const date = d.daily.time[this.selectedDay];
         start = h.time.findIndex((t) => t.startsWith(date));
@@ -2177,12 +2612,7 @@
           this.renderHourly(true);
           return;
         }
-        title = new Date(date + "T12:00:00Z").toLocaleDateString("en-US", {
-          weekday: "long",
-          day: "numeric",
-          month: "short",
-          timeZone: "UTC"
-        });
+        title = I18n.date(date, { weekday: "long", day: "numeric", month: "short" });
       }
       const end = Math.min(start + 24, h.time.length);
 
@@ -2196,7 +2626,7 @@
         items.push({
           key: h.time[i],
           now: isNow,
-          label: isNow ? "Now" : h.time[i].slice(11, 16),
+          label: isNow ? t("now") : h.time[i].slice(11, 16),
           icon: decodeWeather(h.weather_code[i], h.is_day ? h.is_day[i] !== 0 : true).icon,
           pop: Number.isFinite(pop) && pop >= 20 ? Math.round(pop) : null,
           temp: Math.round(h.temperature_2m[i])
@@ -2207,8 +2637,8 @@
       const from = this.selectedDay === null ? this.cityNowIso() : h.time[start];
       const to = h.time[end] || "9999";
       const dl = d.daily || {};
-      const markers = [["sunrise", "🌅", "Sunrise"]];
-      if (!state.prayers) markers.push(["sunset", "🌇", "Sunset"]); // Maghrib marks sunset
+      const markers = [["sunrise", "🌅", t("sunrise")]];
+      if (!state.prayers) markers.push(["sunset", "🌇", t("sunset")]); // Maghrib marks sunset
       markers.forEach(([field, icon, text]) => {
         (dl[field] || []).forEach((t) => {
           if (typeof t === "string" && t >= from && t < to) {
@@ -2228,7 +2658,7 @@
             key: p.key,
             prayer: true,
             label: p.key.slice(11, 16),
-            name: p.name,
+            name: t("p_" + p.id),
             icon: w.icon,
             desc: w.desc,
             temp: Math.round(h.temperature_2m[hi])
@@ -2242,7 +2672,7 @@
           if (it.prayer) {
             return (
               `<div class="hour-item prayer" role="listitem" ` +
-              `aria-label="${it.name} at ${escapeHtml(it.label)}: ${it.temp}°, ${escapeHtml(it.desc)}">` +
+              `aria-label="${escapeHtml(t("prayerAria", { name: it.name, time: it.label, temp: it.temp, desc: it.desc }))}">` +
               `<span class="hour-time">${escapeHtml(it.label)}</span>` +
               `<span class="hour-icon" aria-hidden="true">${it.icon}</span>` +
               `<span class="hour-pop prayer-name">${it.name}</span>` +
@@ -2251,7 +2681,7 @@
           }
           if (it.sun) {
             return (
-              `<div class="hour-item sun" role="listitem" aria-label="${it.text} at ${escapeHtml(it.label)}">` +
+              `<div class="hour-item sun" role="listitem" aria-label="${escapeHtml(t("sunAria", { text: it.text, time: it.label }))}">` +
               `<span class="hour-time">${escapeHtml(it.label)}</span>` +
               `<span class="hour-icon" aria-hidden="true">${it.icon}</span>` +
               `<span class="hour-temp sun-text">${it.text}</span></div>`
@@ -2260,8 +2690,7 @@
           const popHtml = it.pop !== null
             ? `<span class="hour-pop">${it.pop}%</span>`
             : `<span class="hour-pop empty" aria-hidden="true"></span>`;
-          const aria = `${it.now ? "Now" : escapeHtml(it.label)}: ${it.temp}°` +
-            (it.pop !== null ? `, ${it.pop}% chance of rain` : "");
+          const aria = escapeHtml(`${it.label}: ${it.temp}°` + (it.pop !== null ? t("popAria", { pop: it.pop }) : ""));
           return (
             `<div class="hour-item${it.now ? " now" : ""}" role="listitem" aria-label="${aria}">` +
             `<span class="hour-time">${escapeHtml(it.label)}</span>` +
@@ -2274,6 +2703,114 @@
 
       if (resetScroll) e.hourlyStrip.scrollLeft = 0;
       this.updateNextPrayer();
+      this.renderRainAlert();
+    },
+
+    // ---------------------------------------------------------------
+    // Rain countdown ("Rain starts in about 40 min")
+    // ---------------------------------------------------------------
+    /** True 15-minute forecasts exist only for North America (NOAA HRRR)
+     *  and Central Europe (DWD ICON-D2). Elsewhere Open-Meteo interpolates
+     *  hourly data, so we speak in approximate times instead of minutes. */
+    hasNativeMinutely() {
+      const { lat, lon } = this.location || {};
+      if (!Number.isFinite(lat)) return false;
+      const northAmerica = lat >= 21 && lat <= 53 && lon >= -134 && lon <= -60;
+      const centralEurope = lat >= 43 && lat <= 58 && lon >= -4 && lon <= 20;
+      return northAmerica || centralEurope;
+    },
+
+    /** Returns { text, kind } or null when no rain change is expected soon. */
+    rainAlert() {
+      const d = this.data;
+      if (!d || !d.current) return null;
+      const nowIso = this.cityNowIso();
+      const nowMs = Date.parse(nowIso + ":00Z");
+      const at = (iso) => Date.parse(iso + ":00Z");
+      const intensity = (mmPerHour) => (mmPerHour >= 7.6 ? t("rHeavy") : mmPerHour >= 2.5 ? t("rRain") : t("rLight"));
+      const minsText = (n) => (I18n.lang === "ar" ? I18n.count(n, "min") : String(n));
+      const code = d.current.weather_code;
+      const rainingNow =
+        (d.current.precipitation || 0) >= 0.1 || !!RAIN_BY_CODE[code];
+      const fmtClock = (ms) => {
+        const iso = new Date(ms).toISOString();
+        const h24 = +iso.slice(11, 13);
+        const mm = iso.slice(14, 16);
+        const ap = h24 >= 12 ? t("pm") : t("am");
+        return mm === "00" ? `${h24 % 12 || 12} ${ap}` : `${h24 % 12 || 12}:${mm} ${ap}`;
+      };
+
+      // ---- Precise: 15-minute data (native regions only)
+      const m = d.minutely_15;
+      if (this.hasNativeMinutely() && m && m.time && m.precipitation) {
+        // Each value is the rain of the 15 minutes BEFORE its timestamp
+        const slots = [];
+        for (let i = 0; i < m.time.length; i++) {
+          const end = at(m.time[i]);
+          if (end <= nowMs) continue;
+          if (end - nowMs > 3 * 3600000) break;
+          slots.push({ start: end - 900000, end, mm: m.precipitation[i] || 0 });
+        }
+        if (slots.length) {
+          const wet = (s) => s.mm >= 0.1;
+          const roundMin = (ms) => Math.max(5, Math.round((ms - nowMs) / 300000) * 5);
+          if (rainingNow || wet(slots[0])) {
+            const k = slots.findIndex((s, i) => !wet(s) && (!slots[i + 1] || !wet(slots[i + 1])));
+            if (k === -1) return { kind: "on", text: t("rContinues") };
+            return { kind: "stop", text: t("rStopsIn", { m: minsText(roundMin(slots[k].start)) }) };
+          }
+          const k = slots.findIndex(wet);
+          if (k === -1 || slots[k].start - nowMs > 2 * 3600000) return null;
+          const mins = Math.round((slots[k].start - nowMs) / 60000);
+          const peak = Math.max(...slots.slice(k, k + 4).map((s) => s.mm)) * 4;
+          if (mins <= 5) return { kind: "start", text: t("rStartsNow", { w: intensity(peak) }) };
+          return { kind: "start", text: t("rStartsIn", { w: intensity(peak), m: minsText(roundMin(slots[k].start)) }) };
+        }
+      }
+
+      // ---- Approximate: hourly model data (rest of the world)
+      const h = d.hourly;
+      if (!h || !h.time || !h.precipitation) return null;
+      const hours = [];
+      for (let i = 0; i < h.time.length; i++) {
+        const start = at(h.time[i]) - 3600000; // value = rain of the preceding hour
+        const end = at(h.time[i]);
+        if (end <= nowMs) continue;
+        if (start - nowMs > 6 * 3600000) break;
+        const pop = h.precipitation_probability ? h.precipitation_probability[i] : null;
+        hours.push({ start, end, mm: h.precipitation[i] || 0, pop: Number.isFinite(pop) ? pop : 50 });
+      }
+      if (!hours.length) return null;
+      const likely = (x) => x.mm >= 0.2 && x.pop >= 40;
+      if (rainingNow) {
+        const k = hours.findIndex((x) => x.mm < 0.1);
+        if (k === -1) return { kind: "on", text: t("rLikelyContinue") };
+        if (k === 0) return { kind: "stop", text: t("rEaseHour") };
+        return { kind: "stop", text: t("rEaseAt", { t: fmtClock(hours[k].start) }) };
+      }
+      const k = hours.findIndex(likely);
+      if (k === -1) return null;
+      const word = intensity(hours[k].mm);
+      if (hours[k].start <= nowMs) return { kind: "start", text: t("rLikelyHour", { w: word }) };
+      return {
+        kind: "start",
+        text: t("rExpected", { w: word, t: fmtClock(hours[k].start), p: ltr(Math.round(hours[k].pop) + "%") })
+      };
+    },
+
+    renderRainAlert() {
+      const el = this.els.rainAlert;
+      if (!el) return;
+      const alert = this.selectedDay === null ? this.rainAlert() : null;
+      if (!alert) {
+        el.hidden = true;
+        return;
+      }
+      const icon = alert.kind === "stop" ? "🌤️" : "☔";
+      const text = `${icon} ${alert.text}`;
+      if (el.textContent !== text) el.textContent = text;
+      el.dataset.kind = alert.kind;
+      el.hidden = false;
     },
 
     /** Prayer times for every forecast day at the current place (memoized). */
@@ -2304,10 +2841,11 @@
         return;
       }
       const mins = Math.round((Date.parse(next.key + ":00Z") - Date.parse(now + ":00Z")) / 60000);
-      const inText = mins < 60 ? `${mins}m` : `${Math.floor(mins / 60)}h ${mins % 60}m`;
-      const text = `${next.name} ${next.key.slice(11, 16)} · in ${inText}`;
+      const name = t("p_" + next.id);
+      const time = next.key.slice(11, 16);
+      const text = t("nextPrayer", { name, time, in: I18n.duration(mins) });
       if (el.textContent !== text) el.textContent = text;
-      el.title = `Next prayer: ${next.name} at ${next.key.slice(11, 16)}`;
+      el.title = t("nextPrayerTitle", { name, time });
       el.hidden = false;
     },
 
@@ -2333,12 +2871,8 @@
       days.forEach((j) => {
         const isToday = j === ti;
         const date = dl.time[j];
-        const name = isToday
-          ? "Today"
-          : new Date(date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "short", timeZone: "UTC" });
-        const longName = isToday
-          ? "Today"
-          : new Date(date + "T12:00:00Z").toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+        const name = isToday ? t("today") : I18n.date(date, { weekday: I18n.lang === "ar" ? "long" : "short" });
+        const longName = isToday ? t("today") : I18n.date(date, { weekday: "long" });
         const info = decodeWeather(dl.weather_code[j], true);
         const lo = Math.round(dl.temperature_2m_min[j]);
         const hi = Math.round(dl.temperature_2m_max[j]);
@@ -2354,9 +2888,7 @@
         row.setAttribute("aria-pressed", String(selected));
         row.setAttribute(
           "aria-label",
-          `${longName}: ${info.desc}, low ${lo}°, high ${hi}°` +
-            (pop !== null ? `, ${pop}% chance of rain` : "") +
-            ". Show hourly forecast"
+          t("dayAria", { day: longName, desc: info.desc, lo, hi, pop: pop !== null ? t("popAria", { pop }) : "" })
         );
 
         row.appendChild(createEl("span", "day-name", name));
@@ -2381,7 +2913,7 @@
         if (isToday && Number.isFinite(curTemp)) {
           const dot = createEl("span", "day-dot");
           const x = Math.max(0, Math.min(100, ((curTemp - gMin) / span) * 100));
-          dot.style.left = x.toFixed(1) + "%";
+          dot.style.left = (I18n.rtl ? 100 - x : x).toFixed(1) + "%";
           bar.appendChild(dot);
         }
         row.appendChild(bar);
@@ -2406,10 +2938,10 @@
           if (Math.abs(ev.deltaY) <= Math.abs(ev.deltaX)) return;
           const max = strip.scrollWidth - strip.clientWidth;
           if (max <= 0) return;
-          const next = strip.scrollLeft + ev.deltaY;
-          if ((ev.deltaY < 0 && strip.scrollLeft <= 0) || (ev.deltaY > 0 && strip.scrollLeft >= max)) return;
+          const pos = Math.abs(strip.scrollLeft); // RTL scrolls with negative values
+          if ((ev.deltaY < 0 && pos <= 0) || (ev.deltaY > 0 && pos >= max - 1)) return;
           ev.preventDefault();
-          strip.scrollLeft = Math.max(0, Math.min(max, next));
+          strip.scrollBy({ left: I18n.rtl ? -ev.deltaY : ev.deltaY });
         },
         { passive: false }
       );
@@ -2599,8 +3131,8 @@
 
     resize() {
       if (!this.canvas) return;
-      this.canvas.width = window.innerWidth;
-      this.canvas.height = window.innerHeight;
+      this.canvas.width = this.canvas.clientWidth || window.innerWidth;
+      this.canvas.height = this.canvas.clientHeight || window.innerHeight;
       this.draw(0);
     },
 
@@ -2791,8 +3323,8 @@
     drawFog() {
       const c = this.els.fog;
       if (!c) return;
-      const w = Math.ceil(window.innerWidth / 4);
-      const h = Math.ceil(window.innerHeight / 4);
+      const w = Math.ceil((c.clientWidth || window.innerWidth) / 4);
+      const h = Math.ceil((c.clientHeight || window.innerHeight) / 4);
       const key = w + "x" + h;
       if (this.fogKey === key) return;
       this.fogKey = key;
@@ -2860,20 +3392,20 @@
       if (!el) return;
       let text;
       if (s.classic) {
-        text = "Always raining, whatever the weather.";
+        text = t("wAlways");
       } else {
         const parts = [];
-        if (s.storm) parts.push("Thunderstorm");
-        else if (s.rain >= 0.7) parts.push("Heavy rain");
-        else if (s.rain >= 0.4) parts.push("Rain");
-        else if (s.rain > 0) parts.push("Light rain");
-        if (s.fog >= 0.8) parts.push("fog on the glass");
-        else if (s.fog > 0) parts.push("condensation");
-        if (s.dust > 0) parts.push(s.dust >= 0.5 ? "dusty air" : "light dust");
-        if (!parts.length) parts.push(s.sun ? "Sunny — dry glass" : s.moon ? "Clear night — dry glass" : "Dry glass");
-        const line = parts.join(", ");
-        text = (this.override ? "Preview: " : "Now: ") + line.charAt(0).toUpperCase() + line.slice(1);
-        if (s.dustValue >= 50 && !this.override) text += ` (dust ${Math.round(s.dustValue)} µg/m³)`;
+        if (s.storm) parts.push(t("wStorm"));
+        else if (s.rain >= 0.7) parts.push(t("wHeavy"));
+        else if (s.rain >= 0.4) parts.push(t("wRain"));
+        else if (s.rain > 0) parts.push(t("wLight"));
+        if (s.fog >= 0.8) parts.push(t("wFog"));
+        else if (s.fog > 0) parts.push(t("wCond"));
+        if (s.dust > 0) parts.push(s.dust >= 0.5 ? t("wDusty") : t("wDust"));
+        if (!parts.length) parts.push(s.sun ? t("wSunny") : s.moon ? t("wNight") : t("wDry"));
+        const line = cap(parts.join(t("listSep")));
+        text = t(this.override ? "wPreview" : "wNow", { x: line });
+        if (s.dustValue >= 50 && !this.override) text += t("wDustVal", { v: Math.round(s.dustValue) });
       }
       el.textContent = text;
     }
@@ -2972,9 +3504,9 @@
       this.attrib.hidden = true;
       this.render(recents, "recent");
       this.listHead.hidden = recents.length === 0;
-      this.listTitle.textContent = "Recent";
+      this.listTitle.textContent = t("recent");
       this.clearRecentsBtn.hidden = recents.length === 0;
-      this.setStatus(recents.length ? "" : "Type a city, town or village name");
+      this.setStatus(recents.length ? "" : t("typeHint"));
     },
 
     handleQuery() {
@@ -2991,35 +3523,35 @@
       const id = this.reqId;
       const controller = (this.controller = new AbortController());
       this.input.setAttribute("aria-busy", "true");
-      this.setStatus(mode === "extended" ? "Searching OpenStreetMap…" : "Searching…");
+      this.setStatus(mode === "extended" ? t("searchingOsm") : t("searching"));
       try {
         const results = await fetcher(q, controller.signal);
         if (id !== this.reqId) return;
         this.input.removeAttribute("aria-busy");
         this.listHead.hidden = results.length === 0;
-        this.listTitle.textContent = mode === "extended" ? "Extended results" : "Results";
+        this.listTitle.textContent = mode === "extended" ? t("extResults") : t("results");
         this.clearRecentsBtn.hidden = true;
-        this.attrib.hidden = mode !== "extended";
+        this.attrib.hidden = !(mode === "extended" || results.some((r) => r.osm));
         this.render(results, mode);
+        const osmDown = mode === "results" && Geo.lastOsmStatus && Geo.lastOsmStatus !== "ok";
         if (results.length) {
-          this.setStatus(`${results.length} result${results.length > 1 ? "s" : ""}`);
+          this.setStatus(I18n.count(results.length, "result") + (osmDown ? t("villageDown") : ""));
+        } else if (osmDown) {
+          this.setStatus(t("villageDownEmpty"));
         } else {
-          this.setStatus(
-            mode === "extended"
-              ? "No places found. Check the spelling or try another name."
-              : "No results — try the extended search below."
-          );
+          this.setStatus(mode === "extended" ? t("noPlaces") : t("noResults"));
         }
         this.extBtn.hidden = mode === "extended";
       } catch (err) {
         if (err.name === "AbortError" || id !== this.reqId) return;
         this.input.removeAttribute("aria-busy");
-        this.setStatus("Search failed — check your connection.");
+        this.setStatus(t("searchFail"));
       }
     },
 
     search(q) {
-      return this.run((query, signal) => Geo.search(query, signal), "results", q);
+      const near = Weather.location;
+      return this.run((query, signal) => Geo.searchAll(query, signal, near), "results", q);
     },
 
     searchExtended() {
@@ -3121,7 +3653,7 @@
 
     async useMyLocation() {
       this.abort();
-      this.setStatus("Locating…");
+      this.setStatus(t("locating"));
       this.geoBtn.disabled = true;
       try {
         const loc = await Weather.locateMe();
@@ -3129,12 +3661,8 @@
         this.close();
         if (loc) showToast(`📍 ${locationLabel(loc)}`, "success");
       } catch (err) {
-        const messages = {
-          1: "Location permission denied. Allow it in your browser settings, or search instead.",
-          2: "Your location is unavailable right now.",
-          3: "Locating timed out. Try again."
-        };
-        this.setStatus(messages[err && err.code] || "Could not get your location.");
+        const code = err && err.code;
+        this.setStatus(code >= 1 && code <= 3 ? t("geo" + code) : t("geoX"));
       } finally {
         this.geoBtn.disabled = false;
       }
@@ -3222,7 +3750,29 @@
   // =====================================================================
   // PART 30 — MAIN INITIALIZATION
   // =====================================================================
+  /** Switch the interface language and redraw everything that shows text. */
+  function setLanguage(pref) {
+    I18n.setPref(pref);
+    I18n.apply();
+    createPresets();
+    applyStateToUI();
+    if (FullscreenAPI.supported()) FullscreenAPI.updateButtonIcon(FullscreenAPI.isFullscreen());
+    const versionEl = $id("app-version");
+    if (versionEl) versionEl.textContent = t("version", { v: APP_VERSION });
+    if (Weather.location && Weather.location.source === "default") Weather.location = defaultLocation();
+    Weather.lastDateKey = null;
+    Weather.renderLocation();
+    if (Weather.data) Weather.render(Weather.data, Weather.dataAt);
+    else Weather.renderEmpty(t("loadingWx"));
+    WindowScene.refresh();
+    if (CitySearch.isOpen()) CitySearch.handleQuery();
+  }
+
   function init() {
+    // Language first, so every text below is drawn in the right one
+    I18n.init(new URLSearchParams(window.location.search).get("lang"));
+    I18n.apply();
+
     AudioManager.init(rainAudio);
     PWAManager.init();
     FullscreenAPI.init();
@@ -3236,6 +3786,13 @@
     createPresets();
     applyStateToUI();
     ensureRain();
+
+    if (FullscreenAPI.supported()) FullscreenAPI.updateButtonIcon(false);
+
+    // Language: auto (device) / Arabic / English
+    document.querySelectorAll(".seg-btn[data-lang]").forEach((btn) => {
+      btn.addEventListener("click", () => setLanguage(btn.dataset.lang));
+    });
 
     // Window: live weather / always rain
     document.querySelectorAll(".seg-btn[data-window]").forEach((btn) => {
@@ -3343,12 +3900,12 @@
       urlBtn.addEventListener("click", () => {
         const raw = urlInput ? urlInput.value.trim() : "";
         if (!raw) {
-          showToast("Please enter a URL", "error");
+          showToast(t("enterUrl"), "error");
           return;
         }
         const safe = sanitizeUrl(raw);
         if (!safe) {
-          showToast("Invalid or unsafe URL", "error");
+          showToast(t("badUrl"), "error");
           return;
         }
         const type = isVideoUrl(safe) ? "video" : "image";
@@ -3370,7 +3927,7 @@
         const file = e.target.files[0];
         if (file) {
           if (file.size > 50 * 1024 * 1024) {
-            showToast("File too large (max 50MB)", "error");
+            showToast(t("tooLarge"), "error");
           } else {
             const blobUrl = ResourceManager.createBlobUrl(file);
             const type = file.type.startsWith("video/") ? "video" : "image";
@@ -3390,7 +3947,7 @@
     const resetBtn = $id("btn-reset");
     if (resetBtn) {
       resetBtn.addEventListener("click", () => {
-        if (confirm("Reset all settings to defaults?")) resetToDefaults();
+        if (confirm(t("resetConfirm"))) resetToDefaults();
       });
     }
 
@@ -3406,6 +3963,9 @@
     }
 
     setupKeyboard();
+
+    const versionEl = $id("app-version");
+    if (versionEl) versionEl.textContent = t("version", { v: APP_VERSION });
 
     // Free uploaded files only when the page is really unloaded (keeps bfcache working)
     window.addEventListener("pagehide", (e) => {
