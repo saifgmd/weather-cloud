@@ -13,7 +13,7 @@
  * Bump CACHE_VERSION on every release to drop old caches.
  * ===================================================================== */
 
-const CACHE_VERSION = "1.5.0";
+const CACHE_VERSION = "1.5.2";
 const CACHE_NAME = `weather-cloud-v${CACHE_VERSION}`;
 
 const APP_SHELL = [
