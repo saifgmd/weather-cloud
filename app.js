@@ -6,13 +6,13 @@
  *
  *  @project  Weather Cloud
  *  @author   SAIF G.M.D
- *  @version  1.5.2
+ *  @version  1.5.4
  * ===================================================================== */
 
 (function () {
   "use strict";
 
-  const APP_VERSION = "1.5.2";
+  const APP_VERSION = "1.5.4";
 
   // =====================================================================
   // PART 1 — RAINYGLASS ENGINE (Self-contained WebGL raindrops)
@@ -1392,6 +1392,21 @@
     });
   }
 
+  /** Picsum presets are requested at the screen's size (a phone gets a
+   *  ~0.2 MB portrait image instead of a 1920×1080 landscape one). Sizes are
+   *  rounded so the same device reuses the same cached file. */
+  function sizedImageUrl(url) {
+    const m = /^https:\/\/picsum\.photos\/id\/(\d+)\/\d+\/\d+$/.exec(url);
+    if (!m) return url;
+    const scale = Math.min(window.devicePixelRatio || 1, 1.5);
+    const round = (v) => Math.min(1920, Math.max(400, Math.ceil((v * scale * 1.06) / 100) * 100));
+    return `https://picsum.photos/id/${m[1]}/${round(window.innerWidth)}/${round(window.innerHeight)}`;
+  }
+
+  // If a background is slow, stop showing the loading pill after this long
+  // (the image still appears whenever it arrives).
+  const BG_PATIENCE_MS = 8000;
+
   function setBackground(url, type = "image", presetIndex = -1, opts = {}) {
     const loadId = LoadingController.startLoading();
     const isCurrent = () => LoadingController.isCurrentLoading(loadId);
@@ -1403,7 +1418,7 @@
     ResourceManager.releaseExcept(url);
 
     if (type === "video") {
-      showLoader(t("loadingVideo"));
+      if (opts.userInitiated) showLoader(t("loadingVideo"));
       customBg.classList.add("hidden");
       customVideo.classList.remove("hidden");
 
@@ -1438,8 +1453,11 @@
 
       if (customVideo.readyState >= 3) playVideo();
       else customVideo.addEventListener("canplay", playVideo, { once: true });
+      setTimeout(() => {
+        if (isCurrent()) hideLoader();
+      }, BG_PATIENCE_MS);
     } else {
-      showLoader(t("loadingImage"));
+      if (opts.userInitiated) showLoader(t("loadingImage"));
       customVideo.pause();
       customVideo.removeAttribute("src");
       customVideo.load(); // release the previous video
@@ -1452,17 +1470,24 @@
       const onLoad = () => {
         if (!isCurrent() || handled) return;
         handled = true;
+        clearTimeout(patience);
         hideLoader();
+        customBg.classList.add("ready");
         attachRainSource(customBg);
       };
+      // Slow network: hide the pill, keep the dark backdrop, keep waiting
+      const patience = setTimeout(() => {
+        if (isCurrent() && !handled) hideLoader();
+      }, BG_PATIENCE_MS);
 
       const onError = () => {
         if (!isCurrent() || handled) return;
         handled = true;
+        clearTimeout(patience);
         // Many hosts don't send CORS headers: retry without CORS.
         // The image will show, but the drops use "plain glass" mode.
         if (!opts.noCors && !isBlob) {
-          setBackground(url, type, presetIndex, { noCors: true });
+          setBackground(url, type, presetIndex, { ...opts, noCors: true });
           return;
         }
         hideLoader();
@@ -1479,8 +1504,8 @@
       customBg.onerror = onError;
       if (opts.noCors || isBlob) customBg.removeAttribute("crossorigin");
       else customBg.crossOrigin = "anonymous";
-      customBg.src = url;
-      if (customBg.complete && customBg.naturalWidth) onLoad();
+      customBg.src = isBlob ? url : sizedImageUrl(url);
+      if (customBg.complete && customBg.naturalWidth > 1) onLoad();
     }
 
     updateFilters();
@@ -1882,7 +1907,7 @@
       item.dataset.label = t(preset.label);
       item.style.backgroundImage = `url("${preset.thumb}")`;
       item.setAttribute("aria-label", `${t(preset.label)} (${t(preset.type)})`);
-      item.addEventListener("click", () => setBackground(preset.url, preset.type, index));
+      item.addEventListener("click", () => setBackground(preset.url, preset.type, index, { userInitiated: true }));
       presetGrid.appendChild(item);
     });
     markActivePreset(state.currentPresetIndex);
@@ -2232,6 +2257,13 @@
     return { icon: isDay ? e[0] : e[1], desc: I18n.lang === "ar" ? WEATHER_AR[code] || e[2] : e[2] };
   }
 
+  /** A rain/storm code with (almost) no rain forecast is shown as cloudy:
+   *  models often flag a "chance" of showers that never brings rain. */
+  function realisticCode(code, mm, minMm) {
+    if (!Number.isFinite(mm) || mm >= minMm) return code;
+    return RAIN_BY_CODE[code] ? 3 : code;
+  }
+
   function uvLevel(uv) {
     if (uv < 3) return [t("uvLow"), "uv-low"];
     if (uv < 6) return [t("uvMod"), "uv-mod"];
@@ -2390,7 +2422,8 @@
         "wind_direction_10m,precipitation,is_day" +
         "&hourly=temperature_2m,weather_code,precipitation_probability,precipitation,is_day,uv_index" +
         "&minutely_15=precipitation" +
-        "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,sunrise,sunset" +
+        "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max," +
+        "precipitation_sum,sunrise,sunset" +
         "&timezone=auto&forecast_days=5";
 
       // Dust for the window effect (optional: failure is ignored)
@@ -2623,12 +2656,16 @@
       for (let i = start; i < end; i++) {
         const isNow = this.selectedDay === null && i === nowIdx;
         const pop = h.precipitation_probability ? h.precipitation_probability[i] : null;
+        const mm = h.precipitation ? h.precipitation[i] : null;
+        // Rain the models agree on: a probability alone (common in arid
+        // regions) is not enough — some rain must actually be forecast.
+        const wet = !Number.isFinite(mm) || mm >= 0.1;
         items.push({
           key: h.time[i],
           now: isNow,
           label: isNow ? t("now") : h.time[i].slice(11, 16),
-          icon: decodeWeather(h.weather_code[i], h.is_day ? h.is_day[i] !== 0 : true).icon,
-          pop: Number.isFinite(pop) && pop >= 20 ? Math.round(pop) : null,
+          icon: decodeWeather(realisticCode(h.weather_code[i], mm, 0.1), h.is_day ? h.is_day[i] !== 0 : true).icon,
+          pop: wet && Number.isFinite(pop) && pop >= 20 ? Math.round(pop) : null,
           temp: Math.round(h.temperature_2m[i])
         });
       }
@@ -2873,11 +2910,15 @@
         const date = dl.time[j];
         const name = isToday ? t("today") : I18n.date(date, { weekday: I18n.lang === "ar" ? "long" : "short" });
         const longName = isToday ? t("today") : I18n.date(date, { weekday: "long" });
-        const info = decodeWeather(dl.weather_code[j], true);
+        const sum = dl.precipitation_sum ? dl.precipitation_sum[j] : null;
+        const info = decodeWeather(realisticCode(dl.weather_code[j], sum, 0.5), true);
         const lo = Math.round(dl.temperature_2m_min[j]);
         const hi = Math.round(dl.temperature_2m_max[j]);
         const popRaw = dl.precipitation_probability_max ? dl.precipitation_probability_max[j] : null;
-        const pop = Number.isFinite(popRaw) && popRaw >= 20 ? Math.round(popRaw) : null;
+        // Daily "max probability" is the highest hour of the day; only show it
+        // when the forecast also expects a real amount of rain (≥ 0.5 mm).
+        const wetDay = !Number.isFinite(sum) || sum >= 0.5;
+        const pop = wetDay && Number.isFinite(popRaw) && popRaw >= 20 ? Math.round(popRaw) : null;
 
         const left = ((dl.temperature_2m_min[j] - gMin) / span) * 100;
         const right = ((gMax - dl.temperature_2m_max[j]) / span) * 100;
@@ -3909,7 +3950,7 @@
           return;
         }
         const type = isVideoUrl(safe) ? "video" : "image";
-        setBackground(safe, type, -1);
+        setBackground(safe, type, -1, { userInitiated: true });
         if (urlInput) urlInput.value = "";
       });
     }
@@ -3931,7 +3972,7 @@
           } else {
             const blobUrl = ResourceManager.createBlobUrl(file);
             const type = file.type.startsWith("video/") ? "video" : "image";
-            setBackground(blobUrl, type, -1);
+            setBackground(blobUrl, type, -1, { userInitiated: true });
           }
         }
         e.target.value = "";
