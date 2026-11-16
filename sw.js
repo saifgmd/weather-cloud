@@ -13,16 +13,17 @@
  * Bump CACHE_VERSION on every release to drop old caches.
  * ===================================================================== */
 
-const CACHE_VERSION = "1.5.4";
+const CACHE_VERSION = "1.6.0";
 const CACHE_NAME = `weather-cloud-v${CACHE_VERSION}`;
 // Background images are kept across app versions (they never change)
 const IMAGE_CACHE = "weather-cloud-images";
-const IMAGE_HOSTS = ["picsum.photos", "fastly.picsum.photos", "images.pexels.com", "cdn.pixabay.com"];
+const IMAGE_HOSTS = ["picsum.photos", "fastly.picsum.photos"];
 const IMAGE_CACHE_MAX = 40;
 
 const APP_SHELL = [
   "./",
   "./index.html",
+  "./privacy.html",
   "./styles.css",
   "./app.js",
   "./manifest.json",
