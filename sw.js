@@ -13,7 +13,7 @@
  * Bump CACHE_VERSION on every release to drop old caches.
  * ===================================================================== */
 
-const CACHE_VERSION = "1.6.0";
+const CACHE_VERSION = "1.6.1";
 const CACHE_NAME = `weather-cloud-v${CACHE_VERSION}`;
 // Background images are kept across app versions (they never change)
 const IMAGE_CACHE = "weather-cloud-images";
