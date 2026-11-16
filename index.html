@@ -31,6 +31,26 @@
 
   <title>Weather Cloud — SAIF G.M.D</title>
 
+  <!-- Language & direction before the first paint: an Arabic device never
+       sees the English texts flash while app.js loads. -->
+  <style>html.i18n-pending body { visibility: hidden; }</style>
+  <script>
+    (function () {
+      var pick = null;
+      try { pick = new URLSearchParams(location.search).get("lang") || localStorage.getItem("weatherCloudLang"); } catch (e) {}
+      var nav = (navigator.languages && navigator.languages[0]) || navigator.language || "en";
+      var lang = pick === "ar" || pick === "en" ? pick : (/^ar/i.test(nav) ? "ar" : "en");
+      var root = document.documentElement;
+      root.lang = lang;
+      root.dir = lang === "ar" ? "rtl" : "ltr";
+      if (lang === "ar") {
+        root.classList.add("i18n-pending");
+        // Safety net: never keep the page hidden if the app fails to start
+        setTimeout(function () { root.classList.remove("i18n-pending"); }, 3000);
+      }
+    })();
+  </script>
+
   <link rel="icon" type="image/svg+xml" href="favicon.svg" />
   <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
@@ -271,6 +291,9 @@
       <small class="credits">
         <span data-i18n="dataBy">Weather data by</span> <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>
       </small>
+      <small class="credits">
+        <a href="privacy.html" data-i18n="privacy">Privacy policy</a>
+      </small>
       <small class="credits" id="app-version"></small>
     </footer>
   </aside>
@@ -324,13 +347,6 @@
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
-  <!-- Sources are tried in order: put rain.mp3 next to index.html for offline sound -->
-  <audio
-    id="rain-audio"
-    loop
-    preload="auto"
-    data-sources="rain.mp3, https://fyildiz1974.github.io/web/files/rain.mp3"
-  ></audio>
 
   <script src="app.js"></script>
 </body>
