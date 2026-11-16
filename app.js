@@ -6,13 +6,13 @@
  *
  *  @project  Weather Cloud
  *  @author   SAIF G.M.D
- *  @version  1.5.4
+ *  @version  1.6.0
  * ===================================================================== */
 
 (function () {
   "use strict";
 
-  const APP_VERSION = "1.5.4";
+  const APP_VERSION = "1.6.0";
 
   // =====================================================================
   // PART 1 — RAINYGLASS ENGINE (Self-contained WebGL raindrops)
@@ -640,13 +640,13 @@
       upload: "Upload", chooseFile: "Choose File…",
       share: "Share", save: "Save", reset: "Reset", install: "Install App",
       kSound: "Sound", kFull: "Fullscreen", kSettings: "Settings", kSearch: "Search",
-      by: "by", dataBy: "Weather data by",
+      by: "by", dataBy: "Weather data by", privacy: "Privacy policy",
       searchTitle: "Search location", searchPh: "Search city or village…", closeSearch: "Close search",
       myLocation: "Use my current location", clear: "Clear", locations: "Locations",
       deepSearch: "Still can't find it? Deep search (OpenStreetMap)",
       // presets
       City: "City", Forest: "Forest", Mountain: "Mountain", Towers: "Towers", Future: "Future", Sky: "Sky",
-      Hurricane: "Hurricane", River: "River", Beach: "Beach", image: "image", video: "video",
+      image: "image", video: "video",
       // messages
       fsUnsupported: "Fullscreen not supported", fsEnter: "Enter fullscreen", fsExit: "Exit fullscreen",
       fsEnterTitle: "Fullscreen (F)", fsExitTitle: "Exit fullscreen (F)",
@@ -660,6 +660,9 @@
       saveFail: "Could not save settings", resetDone: "Reset to defaults",
       resetConfirm: "Reset all settings to defaults?",
       copied: "Link copied!", copyFail: "Copy failed",
+      heicFail: "HEIC photos aren't supported in this browser. Convert it to JPG or PNG.",
+      urlFail: "Couldn't load the image. Use a direct image link (usually ending in .jpg or .png).",
+      mm: "mm", mmAria: ", about {mm} expected",
       enterUrl: "Please enter a URL", badUrl: "Invalid or unsafe URL", tooLarge: "File too large (max 50MB)",
       version: "Version {v}",
       // places
@@ -725,12 +728,12 @@
       upload: "رفع ملف", chooseFile: "اختر ملفاً…",
       share: "مشاركة", save: "حفظ", reset: "إعادة ضبط", install: "تثبيت التطبيق",
       kSound: "الصوت", kFull: "ملء الشاشة", kSettings: "الإعدادات", kSearch: "البحث",
-      by: "تطوير", dataBy: "بيانات الطقس من",
+      by: "تطوير", dataBy: "بيانات الطقس من", privacy: "سياسة الخصوصية",
       searchTitle: "البحث عن موقع", searchPh: "ابحث عن مدينة أو قرية…", closeSearch: "إغلاق البحث",
       myLocation: "استخدم موقعي الحالي", clear: "مسح", locations: "المواقع",
       deepSearch: "لم تجده؟ بحث عميق (OpenStreetMap)",
       City: "مدينة", Forest: "غابة", Mountain: "جبل", Towers: "أبراج", Future: "مستقبل", Sky: "سماء",
-      Hurricane: "إعصار", River: "نهر", Beach: "شاطئ", image: "صورة", video: "فيديو",
+      image: "صورة", video: "فيديو",
       fsUnsupported: "ملء الشاشة غير مدعوم", fsEnter: "ملء الشاشة", fsExit: "الخروج من ملء الشاشة",
       fsEnterTitle: "ملء الشاشة (F)", fsExitTitle: "الخروج من ملء الشاشة (F)",
       installed: "تم تثبيت التطبيق!", installNo: "التطبيق مثبّت مسبقاً أو غير مدعوم",
@@ -743,6 +746,9 @@
       saveFail: "تعذّر حفظ الإعدادات", resetDone: "تمت إعادة الضبط",
       resetConfirm: "إعادة كل الإعدادات إلى الوضع الافتراضي؟",
       copied: "تم نسخ الرابط!", copyFail: "تعذّر النسخ",
+      heicFail: "صور HEIC غير مدعومة في هذا المتصفح. حوّلها إلى JPG أو PNG.",
+      urlFail: "تعذّر تحميل الصورة. استخدم رابط الصورة نفسها، الذي ينتهي غالباً بـ \u2066.jpg\u2069 أو \u2066.png\u2069",
+      mm: "مم", mmAria: "، بكمية نحو {mm}",
       enterUrl: "أدخل رابطاً", badUrl: "رابط غير صالح أو غير آمن", tooLarge: "الملف كبير جداً (الحد 50 ميجابايت)",
       version: "الإصدار {v}",
       sharedLocation: "موقع مشترك", myPlace: "موقعي", unknownPlace: "مكان غير معروف",
@@ -895,6 +901,11 @@
       root.dir = this.rtl ? "rtl" : "ltr";
     },
 
+    /** Show the page (hidden by the head script until texts are translated). */
+    reveal() {
+      document.documentElement.classList.remove("i18n-pending");
+    },
+
     /** Translate the static HTML. */
     apply() {
       document.querySelectorAll("[data-i18n]").forEach((el) => {
@@ -1043,67 +1054,164 @@
   // Sources are tried in order (data-sources="a.mp3, b.mp3"): put a local
   // rain.mp3 first so the sound also works offline.
   // =====================================================================
+  // ---------------------------------------------------------------------
+  // The rain sound is generated on the device with the Web Audio API — no
+  // audio file: nothing to license, nothing that can disappear from someone
+  // else's server, and it works offline. Three layers, each a looping buffer:
+  //   hiss   — pink noise, the body of the rain on the glass
+  //   rumble — brown noise, the distant low wash
+  //   drops  — sparse short ticks of individual drops
+  // ---------------------------------------------------------------------
   const AudioManager = {
-    audio: null,
-    sources: [],
-    index: 0,
+    ctx: null,
+    master: null,
     failed: false,
-    wantPlaying: false,
+    playing: false,
+    volume: 0.5,
+    suspendTimer: null,
 
-    init(audioElement) {
-      if (!audioElement) {
-        this.failed = true;
-        return;
-      }
-      this.audio = audioElement;
-      this.sources = (audioElement.dataset.sources || "")
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-
-      if (this.sources.length === 0) {
-        console.warn("AudioManager: no audio sources found");
-        this.failed = true;
-        return;
-      }
-      audioElement.addEventListener("error", () => this._next());
-      audioElement.addEventListener("play", syncSoundUI);
-      audioElement.addEventListener("pause", syncSoundUI);
-      audioElement.src = this.sources[0];
-    },
-
-    _next() {
-      if (!this.audio || this.failed) return;
-      this.index++;
-      if (this.index >= this.sources.length) {
-        this.failed = true;
-        console.warn("All audio sources failed");
-        syncSoundUI();
-        return;
-      }
-      this.audio.src = this.sources[this.index];
-      this.audio.load();
-      if (this.wantPlaying) this.audio.play().catch(() => {});
+    init() {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) this.failed = true;
     },
 
     get isPlaying() {
-      return !!this.audio && !this.audio.paused;
+      return this.playing;
     },
 
-    play() {
-      if (!this.audio || this.failed) {
-        return Promise.reject(new Error("Audio not available"));
+    /** Looping stereo buffer; the end is cross-faded into the start (no click). */
+    _loop(seconds, fill) {
+      const ctx = this.ctx;
+      const sr = ctx.sampleRate;
+      const len = Math.floor(sr * seconds);
+      const fade = Math.floor(sr * 0.25);
+      const buf = ctx.createBuffer(2, len, sr);
+      for (let ch = 0; ch < 2; ch++) {
+        const raw = new Float32Array(len + fade);
+        fill(raw, sr);
+        const out = buf.getChannelData(ch);
+        for (let i = 0; i < len; i++) out[i] = raw[i];
+        for (let i = 0; i < fade; i++) {
+          const k = i / fade;
+          out[i] = raw[i] * k + raw[len + i] * (1 - k);
+        }
       }
-      this.wantPlaying = true;
-      return this.audio.play();
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.loop = true;
+      return src;
     },
+
+    _chain(src, nodes, gain) {
+      let last = src;
+      nodes.forEach((n) => {
+        last.connect(n);
+        last = n;
+      });
+      const g = this.ctx.createGain();
+      g.gain.value = gain;
+      last.connect(g);
+      g.connect(this.master);
+      src.start();
+    },
+
+    _filter(type, freq, q) {
+      const f = this.ctx.createBiquadFilter();
+      f.type = type;
+      f.frequency.value = freq;
+      if (q) f.Q.value = q;
+      return f;
+    },
+
+    _build() {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      // iPhone: play even when the ring/silent switch is on (like a music app)
+      try {
+        if (navigator.audioSession) navigator.audioSession.type = "playback";
+      } catch {}
+      this.ctx = new AC();
+      this.master = this.ctx.createGain();
+      this.master.gain.value = 0;
+      this.master.connect(this.ctx.destination);
+
+      const hiss = this._loop(7, (d) => {
+        let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+        for (let i = 0; i < d.length; i++) {
+          const w = Math.random() * 2 - 1;
+          b0 = 0.99886 * b0 + w * 0.0555179;
+          b1 = 0.99332 * b1 + w * 0.0750759;
+          b2 = 0.969 * b2 + w * 0.153852;
+          b3 = 0.8665 * b3 + w * 0.3104856;
+          b4 = 0.55 * b4 + w * 0.5329522;
+          b5 = -0.7616 * b5 - w * 0.016898;
+          d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11;
+          b6 = w * 0.115926;
+        }
+      });
+      this._chain(hiss, [this._filter("highpass", 450), this._filter("lowpass", 6500)], 0.55);
+
+      const rumble = this._loop(9, (d) => {
+        let last = 0;
+        for (let i = 0; i < d.length; i++) {
+          last = (last + 0.02 * (Math.random() * 2 - 1)) / 1.02;
+          d[i] = last * 3.2;
+        }
+      });
+      this._chain(rumble, [this._filter("lowpass", 380)], 0.4);
+
+      const drops = this._loop(5, (d, sr) => {
+        const perSecond = 70;
+        for (let i = 0; i < d.length; i++) {
+          if (Math.random() < perSecond / sr) {
+            const amp = 0.15 + Math.random() * 0.6;
+            const n = Math.floor(sr * (0.002 + Math.random() * 0.007));
+            for (let j = 0; j < n && i + j < d.length; j++) {
+              d[i + j] += (Math.random() * 2 - 1) * amp * Math.exp((-6 * j) / n);
+            }
+          }
+        }
+      });
+      this._chain(drops, [this._filter("bandpass", 2600, 0.7)], 0.5);
+    },
+
+    async play() {
+      if (this.failed) throw new Error("Audio not available");
+      clearTimeout(this.suspendTimer);
+      if (!this.ctx) this._build();
+      // Browsers only allow sound after a tap: if still blocked, say so
+      if (this.ctx.state !== "running") {
+        await Promise.race([this.ctx.resume().catch(() => {}), sleep(400)]);
+      }
+      if (this.ctx.state !== "running") {
+        const err = new Error("Autoplay blocked");
+        err.name = "NotAllowedError";
+        throw err;
+      }
+      this.playing = true;
+      const now = this.ctx.currentTime;
+      this.master.gain.cancelScheduledValues(now);
+      this.master.gain.setTargetAtTime(this.volume * 1.5, now, 0.35); // gentle fade-in
+      syncSoundUI();
+    },
+
     pause() {
-      this.wantPlaying = false;
-      if (this.audio) this.audio.pause();
+      this.playing = false;
+      syncSoundUI();
+      if (!this.ctx) return;
+      const now = this.ctx.currentTime;
+      this.master.gain.cancelScheduledValues(now);
+      this.master.gain.setTargetAtTime(0, now, 0.12);
+      clearTimeout(this.suspendTimer);
+      this.suspendTimer = setTimeout(() => {
+        if (!this.playing && this.ctx) this.ctx.suspend().catch(() => {}); // save battery
+      }, 800);
     },
+
     setVolume(volume) {
-      if (!this.audio) return;
-      this.audio.volume = Math.max(0, Math.min(1, volume));
+      this.volume = Math.max(0, Math.min(1, volume));
+      if (this.playing && this.ctx) {
+        this.master.gain.setTargetAtTime(this.volume * 1.5, this.ctx.currentTime, 0.08);
+      }
     }
   };
 
@@ -1130,6 +1238,62 @@
     revokeAll() {
       this.blobUrls.forEach((url) => URL.revokeObjectURL(url));
       this.blobUrls.clear();
+    }
+  };
+
+  // =====================================================================
+  // PART 6b — UPLOADED BACKGROUND (kept on the device)
+  // ---------------------------------------------------------------------
+  // An uploaded photo/video lives only in memory (blob:), so it used to be
+  // lost when the app closed. It's now copied into Cache Storage and
+  // restored on the next launch. (Separate cache name: the service worker
+  // never deletes or trims it.)
+  // =====================================================================
+  const UploadStore = {
+    CACHE: "wc-user-background",
+    KEY: "./__user-background__",
+    saved: false,
+
+    available() {
+      return typeof caches !== "undefined";
+    },
+
+    async save(file) {
+      if (!this.available() || !file) return false;
+      try {
+        const cache = await caches.open(this.CACHE);
+        await cache.put(
+          this.KEY,
+          new Response(file, { headers: { "Content-Type": file.type || "application/octet-stream" } })
+        );
+        this.saved = true;
+        return true;
+      } catch (err) {
+        console.warn("Could not keep the uploaded background:", err);
+        return false;
+      }
+    },
+
+    async load() {
+      if (!this.available()) return null;
+      try {
+        const cache = await caches.open(this.CACHE);
+        const res = await cache.match(this.KEY);
+        if (!res) return null;
+        const blob = await res.blob();
+        this.saved = true;
+        return { blob, type: (res.headers.get("Content-Type") || "").startsWith("video/") ? "video" : "image" };
+      } catch {
+        return null;
+      }
+    },
+
+    async clear() {
+      this.saved = false;
+      if (!this.available()) return;
+      try {
+        await caches.delete(this.CACHE);
+      } catch {}
     }
   };
 
@@ -1210,25 +1374,7 @@
     { type: "image", label: "Mountain", url: "https://picsum.photos/id/1016/1920/1080", thumb: "https://picsum.photos/id/1016/300/200" },
     { type: "image", label: "Towers", url: "https://picsum.photos/id/1031/1920/1080", thumb: "https://picsum.photos/id/1031/300/200" },
     { type: "image", label: "Future", url: "https://picsum.photos/id/1041/1920/1080", thumb: "https://picsum.photos/id/1041/300/200" },
-    { type: "image", label: "Sky", url: "https://picsum.photos/id/1019/1920/1080", thumb: "https://picsum.photos/id/1019/300/200" },
-    {
-      type: "video",
-      label: "Hurricane",
-      url: "https://cdn.pixabay.com/video/2019/03/18/22070-325253460_large.mp4",
-      thumb: "https://cdn.pixabay.com/video/2019/03/18/22070-325253460_tiny.jpg"
-    },
-    {
-      type: "video",
-      label: "River",
-      url: "https://cdn.pixabay.com/video/2020/12/01/58020-486900427_large.mp4",
-      thumb: "https://cdn.pixabay.com/video/2020/12/01/58020-486900427_tiny.jpg"
-    },
-    {
-      type: "video",
-      label: "Beach",
-      url: "https://videos.pexels.com/video-files/2439510/2439510-hd_1920_1080_30fps.mp4",
-      thumb: "https://images.pexels.com/videos/2439510/free-video-2439510.jpg?auto=compress&cs=tinysrgb&w=300&h=200&dpr=1"
-    }
+    { type: "image", label: "Sky", url: "https://picsum.photos/id/1019/1920/1080", thumb: "https://picsum.photos/id/1019/300/200" }
   ];
 
   const OVERLAY_COLORS = ["none", "#3b82f6", "#8b5cf6", "#ef4444", "#10b981", "#f59e0b"];
@@ -1288,7 +1434,6 @@
   const canvas = $id("bg-canvas");
   const panel = $id("panel");
   const presetGrid = $id("preset-grid");
-  const rainAudio = $id("rain-audio");
   const toast = $id("toast");
   const soundToggleIcon = $id("sound-toggle");
   const soundBtn = $id("btn-sound");
@@ -1306,7 +1451,8 @@
     toast.className = "toast show";
     if (type === "error") toast.classList.add("error");
     if (type === "success") toast.classList.add("success");
-    toastTimer = setTimeout(() => toast.classList.remove("show", "error", "success"), 2600);
+    const ms = Math.min(7000, 2600 + message.length * 40); // longer text, longer on screen
+    toastTimer = setTimeout(() => toast.classList.remove("show", "error", "success"), ms);
   }
 
   let loaderTimer = null;
@@ -1407,6 +1553,31 @@
   // (the image still appears whenever it arrives).
   const BG_PATIENCE_MS = 8000;
 
+  // The last background that actually showed: restored if a new pick fails
+  let lastGoodBackground = null;
+
+  /** Called once a background has really appeared. */
+  function backgroundShown(url, type, presetIndex, opts) {
+    ResourceManager.releaseExcept(url); // free older uploads only now
+    lastGoodBackground = { url, type, presetIndex };
+    if (opts.userInitiated) persistBackground(presetIndex, url, type, opts.file);
+  }
+
+  /** A failed pick: say why, and go back to what was showing before. */
+  function backgroundFailed(url, presetIndex, opts, message) {
+    hideLoader();
+    showToast(message, "error");
+    if (lastGoodBackground && lastGoodBackground.url !== url) {
+      const g = lastGoodBackground;
+      setBackground(g.url, g.type, g.presetIndex);
+    } else if (presetIndex !== 0) {
+      setBackground(PRESETS[0].url, PRESETS[0].type, 0);
+    } else {
+      customBg.classList.add("hidden"); // offline: keep the dark backdrop
+      attachRainSource(null);
+    }
+  }
+
   function setBackground(url, type = "image", presetIndex = -1, opts = {}) {
     const loadId = LoadingController.startLoading();
     const isCurrent = () => LoadingController.isCurrentLoading(loadId);
@@ -1415,7 +1586,6 @@
     state.currentUrl = url;
     state.currentPresetIndex = presetIndex;
     markActivePreset(presetIndex);
-    ResourceManager.releaseExcept(url);
 
     if (type === "video") {
       if (opts.userInitiated) showLoader(t("loadingVideo"));
@@ -1437,6 +1607,7 @@
             if (!isCurrent()) return;
             hideLoader();
             attachRainSource(customVideo);
+            backgroundShown(url, type, presetIndex, opts);
           })
           .catch((error) => {
             if (!isCurrent()) return;
@@ -1474,6 +1645,7 @@
         hideLoader();
         customBg.classList.add("ready");
         attachRainSource(customBg);
+        backgroundShown(url, type, presetIndex, opts);
       };
       // Slow network: hide the pill, keep the dark backdrop, keep waiting
       const patience = setTimeout(() => {
@@ -1490,14 +1662,9 @@
           setBackground(url, type, presetIndex, { ...opts, noCors: true });
           return;
         }
-        hideLoader();
-        showToast(t("imageFail"), "error");
-        if (presetIndex !== 0) {
-          setBackground(PRESETS[0].url, PRESETS[0].type, 0);
-        } else {
-          customBg.classList.add("hidden"); // offline: keep the dark backdrop
-          attachRainSource(null);
-        }
+        const file = opts.file;
+        const heic = !!file && (/hei[cf]/i.test(file.type || "") || /\.hei[cf]$/i.test(file.name || ""));
+        backgroundFailed(url, presetIndex, opts, heic ? t("heicFail") : isBlob ? t("imageFail") : t("urlFail"));
       };
 
       customBg.onload = onLoad;
@@ -1518,9 +1685,7 @@
     if (!customVideo) return;
     customVideo.addEventListener("error", () => {
       if (state.currentType !== "video" || !customVideo.getAttribute("src")) return;
-      hideLoader();
-      showToast(t("videoFail"), "error");
-      if (state.currentPresetIndex !== 0) setBackground(PRESETS[0].url, PRESETS[0].type, 0);
+      backgroundFailed(state.currentUrl, state.currentPresetIndex, {}, t("videoFail"));
     });
     // Only show the overlay if buffering lasts a while
     customVideo.addEventListener("waiting", () => {
@@ -1596,18 +1761,35 @@
       volume: state.volume,
       soundOn: state.soundOn,
       currentPresetIndex: state.currentPresetIndex,
-      // Custom web URLs can be restored; uploaded files (blob:) can't
       customUrl: state.currentPresetIndex === -1 && isValidUrl(state.currentUrl) ? state.currentUrl : "",
+      // Uploaded files are kept on the device (UploadStore)
+      customUpload:
+        state.currentPresetIndex === -1 &&
+        (state.currentUrl.startsWith("blob:") || state.currentUrl === "upload:") &&
+        UploadStore.saved,
       customType: state.currentType,
       windowMode: state.windowMode,
       prayers: state.prayers
     };
     if (storeSet(LS_KEYS.settings, saveData)) {
-      const note = state.currentPresetIndex === -1 && !saveData.customUrl ? t("savedNoUpload") : t("saved");
+      const note =
+        state.currentPresetIndex === -1 && !saveData.customUrl && !saveData.customUpload ? t("savedNoUpload") : t("saved");
       showToast(note, "success");
     } else {
       showToast(t("saveFail"), "error");
     }
+  }
+
+  /** The background you pick is remembered right away (no need to press
+   *  Save): presets, links and uploaded files alike. */
+  async function persistBackground(presetIndex, url, type, file) {
+    const data = storeGet(LS_KEYS.settings) || {};
+    data.currentPresetIndex = presetIndex;
+    data.customType = type;
+    data.customUrl = presetIndex === -1 && isValidUrl(url) ? url : "";
+    data.customUpload = false;
+    if (file) data.customUpload = await UploadStore.save(file);
+    storeSet(LS_KEYS.settings, data);
   }
 
   function applySavedSettings(data) {
@@ -1626,6 +1808,10 @@
     if (idx === -1 && isValidUrl(data.customUrl)) {
       state.currentPresetIndex = -1;
       state.currentUrl = data.customUrl;
+      state.currentType = data.customType === "video" ? "video" : "image";
+    } else if (idx === -1 && data.customUpload === true) {
+      state.currentPresetIndex = -1;
+      state.currentUrl = "upload:"; // restored from UploadStore at start-up
       state.currentType = data.customType === "video" ? "video" : "image";
     } else {
       const safeIdx = idx === -1 ? 0 : idx;
@@ -1649,6 +1835,7 @@
     });
     applyStateToUI();
     storeRemove(LS_KEYS.settings);
+    UploadStore.clear();
     setBackground(PRESETS[0].url, PRESETS[0].type, 0);
     setSound(state.soundOn);
     showToast(t("resetDone"), "success");
@@ -1726,8 +1913,9 @@
     }
     const loc = Weather.location;
     if (loc) {
-      params.set("lat", (+loc.lat).toFixed(4));
-      params.set("lon", (+loc.lon).toFixed(4));
+      // ~1 km precision: enough for the weather, never your exact position
+      params.set("lat", (+loc.lat).toFixed(2));
+      params.set("lon", (+loc.lon).toFixed(2));
       params.set("place", loc.name);
       if (loc.cc) params.set("cc", loc.cc);
     }
@@ -2257,11 +2445,26 @@
     return { icon: isDay ? e[0] : e[1], desc: I18n.lang === "ar" ? WEATHER_AR[code] || e[2] : e[2] };
   }
 
-  /** A rain/storm code with (almost) no rain forecast is shown as cloudy:
+  /** Is this rain worth showing? Both must agree:
+   *  - likely (≥ 40%) AND a real amount (≥ minMm), or
+   *  - a big amount (≥ strongMm) even if less certain (≥ 25%) — so a
+   *    possible storm is never hidden.
+   *  Daily: 1 mm / 10 mm. Hourly: 0.2 mm / 2 mm. */
+  function rainWorth(pop, mm, minMm, strongMm) {
+    if (!Number.isFinite(pop)) return false;
+    if (!Number.isFinite(mm)) return pop >= 40;
+    return (pop >= 40 && mm >= minMm) || (pop >= 25 && mm >= strongMm);
+  }
+
+  /** A rain/storm code for rain that isn't worth showing is drawn as cloudy:
    *  models often flag a "chance" of showers that never brings rain. */
-  function realisticCode(code, mm, minMm) {
-    if (!Number.isFinite(mm) || mm >= minMm) return code;
-    return RAIN_BY_CODE[code] ? 3 : code;
+  function realisticCode(code, show) {
+    return show || !RAIN_BY_CODE[code] ? code : 3;
+  }
+
+  function formatMm(mm) {
+    const v = mm < 10 ? Math.round(mm * 10) / 10 : Math.round(mm);
+    return `${v} ${t("mm")}`;
   }
 
   function uvLevel(uv) {
@@ -2657,15 +2860,14 @@
         const isNow = this.selectedDay === null && i === nowIdx;
         const pop = h.precipitation_probability ? h.precipitation_probability[i] : null;
         const mm = h.precipitation ? h.precipitation[i] : null;
-        // Rain the models agree on: a probability alone (common in arid
-        // regions) is not enough — some rain must actually be forecast.
-        const wet = !Number.isFinite(mm) || mm >= 0.1;
+        // A probability alone (common in arid regions) is not enough
+        const show = rainWorth(pop, mm, 0.2, 2);
         items.push({
           key: h.time[i],
           now: isNow,
           label: isNow ? t("now") : h.time[i].slice(11, 16),
-          icon: decodeWeather(realisticCode(h.weather_code[i], mm, 0.1), h.is_day ? h.is_day[i] !== 0 : true).icon,
-          pop: wet && Number.isFinite(pop) && pop >= 20 ? Math.round(pop) : null,
+          icon: decodeWeather(realisticCode(h.weather_code[i], show), h.is_day ? h.is_day[i] !== 0 : true).icon,
+          pop: show ? Math.round(pop) : null,
           temp: Math.round(h.temperature_2m[i])
         });
       }
@@ -2818,7 +3020,7 @@
         hours.push({ start, end, mm: h.precipitation[i] || 0, pop: Number.isFinite(pop) ? pop : 50 });
       }
       if (!hours.length) return null;
-      const likely = (x) => x.mm >= 0.2 && x.pop >= 40;
+      const likely = (x) => rainWorth(x.pop, x.mm, 0.2, 2);
       if (rainingNow) {
         const k = hours.findIndex((x) => x.mm < 0.1);
         if (k === -1) return { kind: "on", text: t("rLikelyContinue") };
@@ -2911,14 +3113,15 @@
         const name = isToday ? t("today") : I18n.date(date, { weekday: I18n.lang === "ar" ? "long" : "short" });
         const longName = isToday ? t("today") : I18n.date(date, { weekday: "long" });
         const sum = dl.precipitation_sum ? dl.precipitation_sum[j] : null;
-        const info = decodeWeather(realisticCode(dl.weather_code[j], sum, 0.5), true);
+        const popRaw = dl.precipitation_probability_max ? dl.precipitation_probability_max[j] : null;
+        // Daily "max probability" is the highest hour of the day: show it only
+        // with a real amount of rain (see rainWorth), together with that amount.
+        const showRain = rainWorth(popRaw, sum, 1, 10);
+        const info = decodeWeather(realisticCode(dl.weather_code[j], showRain), true);
         const lo = Math.round(dl.temperature_2m_min[j]);
         const hi = Math.round(dl.temperature_2m_max[j]);
-        const popRaw = dl.precipitation_probability_max ? dl.precipitation_probability_max[j] : null;
-        // Daily "max probability" is the highest hour of the day; only show it
-        // when the forecast also expects a real amount of rain (≥ 0.5 mm).
-        const wetDay = !Number.isFinite(sum) || sum >= 0.5;
-        const pop = wetDay && Number.isFinite(popRaw) && popRaw >= 20 ? Math.round(popRaw) : null;
+        const pop = showRain ? Math.round(popRaw) : null;
+        const mmText = showRain && Number.isFinite(sum) ? formatMm(sum) : null;
 
         const left = ((dl.temperature_2m_min[j] - gMin) / span) * 100;
         const right = ((gMax - dl.temperature_2m_max[j]) / span) * 100;
@@ -2929,7 +3132,13 @@
         row.setAttribute("aria-pressed", String(selected));
         row.setAttribute(
           "aria-label",
-          t("dayAria", { day: longName, desc: info.desc, lo, hi, pop: pop !== null ? t("popAria", { pop }) : "" })
+          t("dayAria", {
+            day: longName,
+            desc: info.desc,
+            lo,
+            hi,
+            pop: pop !== null ? t("popAria", { pop }) + (mmText ? t("mmAria", { mm: mmText }) : "") : ""
+          })
         );
 
         row.appendChild(createEl("span", "day-name", name));
@@ -2938,6 +3147,7 @@
         iconWrap.setAttribute("aria-hidden", "true");
         iconWrap.appendChild(createEl("span", "day-emoji", info.icon));
         if (pop !== null) iconWrap.appendChild(createEl("span", "day-pop", pop + "%"));
+        if (mmText) iconWrap.appendChild(createEl("span", "day-mm", mmText));
         row.appendChild(iconWrap);
 
         const minEl = createEl("span", "day-min", lo + "°");
@@ -3813,8 +4023,9 @@
     // Language first, so every text below is drawn in the right one
     I18n.init(new URLSearchParams(window.location.search).get("lang"));
     I18n.apply();
+    I18n.reveal();
 
-    AudioManager.init(rainAudio);
+    AudioManager.init();
     PWAManager.init();
     FullscreenAPI.init();
     setupMediaHandlers();
@@ -3856,6 +4067,11 @@
       setBackground(p.url, p.type, state.currentPresetIndex);
     } else if (isValidUrl(state.currentUrl)) {
       setBackground(state.currentUrl, state.currentType, -1);
+    } else if (state.currentUrl === "upload:") {
+      UploadStore.load().then((saved) => {
+        if (saved) setBackground(ResourceManager.createBlobUrl(saved.blob), saved.type, -1);
+        else setBackground(PRESETS[0].url, PRESETS[0].type, 0);
+      });
     } else {
       setBackground(PRESETS[0].url, PRESETS[0].type, 0);
     }
@@ -3972,7 +4188,7 @@
           } else {
             const blobUrl = ResourceManager.createBlobUrl(file);
             const type = file.type.startsWith("video/") ? "video" : "image";
-            setBackground(blobUrl, type, -1, { userInitiated: true });
+            setBackground(blobUrl, type, -1, { userInitiated: true, file });
           }
         }
         e.target.value = "";
