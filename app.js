@@ -6,13 +6,13 @@
  *
  *  @project  Weather Cloud
  *  @author   SAIF G.M.D
- *  @version  1.6.0
+ *  @version  1.6.1
  * ===================================================================== */
 
 (function () {
   "use strict";
 
-  const APP_VERSION = "1.6.0";
+  const APP_VERSION = "1.6.1";
 
   // =====================================================================
   // PART 1 — RAINYGLASS ENGINE (Self-contained WebGL raindrops)
@@ -2813,6 +2813,7 @@
       this.renderDaily();
       this.tick();
       WindowScene.refresh();
+      scheduleFit();
     },
 
     selectDay(index) {
@@ -3042,9 +3043,11 @@
       if (!el) return;
       const alert = this.selectedDay === null ? this.rainAlert() : null;
       if (!alert) {
+        if (!el.hidden) scheduleFit(); // the banner goes away
         el.hidden = true;
         return;
       }
+      if (el.hidden) scheduleFit(); // the banner appears: heights change
       const icon = alert.kind === "stop" ? "🌤️" : "☔";
       const text = `${icon} ${alert.text}`;
       if (el.textContent !== text) el.textContent = text;
@@ -4001,6 +4004,35 @@
   // =====================================================================
   // PART 30 — MAIN INITIALIZATION
   // =====================================================================
+  // =====================================================================
+  // PART 29b — FIT TO SCREEN (phones)
+  // ---------------------------------------------------------------------
+  // On a phone everything should fit on one screen, without scrolling up
+  // and down. While the content is too tall, hide less important parts step
+  // by step (see "fit-1" / "fit-2" in styles.css); once it fits, lock the
+  // vertical scroll. If it still doesn't fit (very small phones), scrolling
+  // stays on so nothing is ever cut off.
+  // =====================================================================
+  function fitToScreen() {
+    const root = document.documentElement;
+    const stack = document.querySelector(".widgets-stack");
+    if (!stack) return;
+    const steps = ["fit-1", "fit-2", "fit-3"];
+    root.classList.remove(...steps);
+    stack.classList.remove("locked");
+    if (window.innerWidth > 480) return;
+    const fits = () => stack.scrollHeight <= stack.clientHeight + 1;
+    for (const step of steps) {
+      if (fits()) break;
+      root.classList.add(step); // steps add up: fit-2 keeps fit-1, …
+    }
+    if (fits()) {
+      stack.scrollTop = 0;
+      stack.classList.add("locked");
+    }
+  }
+  const scheduleFit = rafBatch(fitToScreen);
+
   /** Switch the interface language and redraw everything that shows text. */
   function setLanguage(pref) {
     I18n.setPref(pref);
@@ -4016,6 +4048,7 @@
     if (Weather.data) Weather.render(Weather.data, Weather.dataAt);
     else Weather.renderEmpty(t("loadingWx"));
     WindowScene.refresh();
+    scheduleFit();
     if (CitySearch.isOpen()) CitySearch.handleQuery();
   }
 
@@ -4284,6 +4317,11 @@
     if (reducedMotionQuery.addEventListener) reducedMotionQuery.addEventListener("change", onMotionPref);
 
     setupTouchSupport();
+    window.addEventListener("resize", debounce(scheduleFit, 150));
+    window.addEventListener("orientationchange", () => setTimeout(scheduleFit, 300));
+    // Measure again once the cards' entrance animation has ended
+    setTimeout(scheduleFit, 1000);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleFit);
     CitySearch.init();
     Weather.init(fromUrl.location);
     Clock.start();
