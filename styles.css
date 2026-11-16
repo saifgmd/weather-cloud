@@ -1,5 +1,5 @@
 /* =====================================================================
- * Weather Cloud â€” Styles
+ * Weather Cloud — Styles
  * Author: SAIF G.M.D
  * Version: 1.1.0
  * ===================================================================== */
@@ -132,8 +132,8 @@ button {
   display: none;
 }
 
-/* Layer order: background â†’ dust (outside air) â†’ fog (on the glass)
-   â†’ raindrops â†’ light (glare, lightning) â†’ color overlay â†’ widgets */
+/* Layer order: background → dust (outside air) → fog (on the glass)
+   → raindrops → light (glare, lightning) → color overlay → widgets */
 .fx {
   position: fixed;
   inset: 0 0 auto 0;
@@ -209,7 +209,7 @@ button {
 }
 
 /* ===================== Loading Overlay ===================== */
-/* A small pill at the top â€” never blocks the app (the weather must stay
+/* A small pill at the top — never blocks the app (the weather must stay
    usable even when a background image or video loads slowly) */
 #loading-overlay {
   position: fixed;
@@ -482,7 +482,7 @@ button {
 }
 
 .weather-temp-wrap {
-  direction: ltr; /* "21 آ°C" â€” number then unit, in any language */
+  direction: ltr; /* "21 °C" — number then unit, in any language */
   display: flex;
   align-items: flex-start;
   gap: 4px;
@@ -761,6 +761,15 @@ button {
 
 .day-emoji {
   font-size: 22px;
+}
+
+.day-mm {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: #8fd3ff;
+  opacity: 0.8;
+  margin-top: 1px;
+  white-space: nowrap;
 }
 
 .day-pop {
@@ -1153,7 +1162,7 @@ input[type="range"]::-moz-range-thumb {
   box-shadow: 0 0 16px rgba(108, 204, 255, 0.5);
 }
 .preset-item.video::before {
-  content: "â–¶";
+  content: "▶";
   position: absolute;
   top: 6px;
   inset-inline-end: 6px;
@@ -1567,7 +1576,7 @@ input[type="range"]::-moz-range-thumb {
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-subtle);
-  border-radius: 100px;
+  border-radius: 18px;
   color: var(--text-primary);
   font-size: 13px;
   font-weight: 500;
@@ -1576,10 +1585,10 @@ input[type="range"]::-moz-range-thumb {
   opacity: 0;
   pointer-events: none;
   transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
-  max-width: calc(100vw - 60px);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  max-width: min(460px, calc(100vw - 40px));
+  width: max-content;
+  text-align: center;
+  line-height: 1.45;
 }
 .toast.show {
   opacity: 1;
