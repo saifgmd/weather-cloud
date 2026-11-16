@@ -13,8 +13,12 @@
  * Bump CACHE_VERSION on every release to drop old caches.
  * ===================================================================== */
 
-const CACHE_VERSION = "1.5.2";
+const CACHE_VERSION = "1.5.4";
 const CACHE_NAME = `weather-cloud-v${CACHE_VERSION}`;
+// Background images are kept across app versions (they never change)
+const IMAGE_CACHE = "weather-cloud-images";
+const IMAGE_HOSTS = ["picsum.photos", "fastly.picsum.photos", "images.pexels.com", "cdn.pixabay.com"];
+const IMAGE_CACHE_MAX = 40;
 
 const APP_SHELL = [
   "./",
@@ -47,7 +51,7 @@ self.addEventListener("activate", (event) => {
       .then((keys) =>
         Promise.all(
           keys
-            .filter((k) => k.startsWith("weather-cloud-") && k !== CACHE_NAME)
+            .filter((k) => k.startsWith("weather-cloud-") && k !== CACHE_NAME && k !== IMAGE_CACHE)
             .map((k) => caches.delete(k))
         )
       )
@@ -60,8 +64,16 @@ self.addEventListener("fetch", (event) => {
   if (req.method !== "GET") return;
 
   const url = new URL(req.url);
-  if (url.origin !== self.location.origin) return; // third-party: browser default
   if (req.headers.has("range")) return;            // audio/video seeking
+
+  // Preset background images & thumbnails: from the device after the first
+  // download, so the app opens instantly (and offline) on later launches.
+  if (req.destination === "image" && IMAGE_HOSTS.includes(url.hostname)) {
+    event.respondWith(cacheFirstImage(req));
+    return;
+  }
+
+  if (url.origin !== self.location.origin) return; // other third-party: browser default
 
   event.respondWith(networkFirst(req));
 });
@@ -93,4 +105,18 @@ async function networkFirst(req) {
   } catch {
     return (await fromCache()) || Response.error();
   }
+}
+
+async function cacheFirstImage(req) {
+  const cache = await caches.open(IMAGE_CACHE);
+  const cached = await cache.match(req);
+  if (cached) return cached;
+  const res = await fetch(req);
+  // Only real (readable) responses: opaque ones would hide errors
+  if (res && res.ok && (res.type === "cors" || res.type === "basic")) {
+    await cache.put(req, res.clone());
+    const keys = await cache.keys();
+    for (let i = 0; i < keys.length - IMAGE_CACHE_MAX; i++) await cache.delete(keys[i]);
+  }
+  return res;
 }
