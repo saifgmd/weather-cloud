@@ -1726,6 +1726,129 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* =====================================================================
+ * Phone: everything on one screen, no vertical scrolling
+ * ---------------------------------------------------------------------
+ * A tighter layout, then fitToScreen() (app.js) adds .fit-1 / .fit-2 / .fit-3 on
+ * <html> while the content is still too tall, and .locked on the stack
+ * once it fits. Very small phones (iPhone SE) keep scrolling as a last
+ * resort so nothing is ever cut off.
+ * ===================================================================== */
+@media (max-width: 480px) {
+  .widgets-stack {
+    /* bottom = toolbar (56px) + 10px air */
+    padding: calc(10px + var(--safe-top)) 12px calc(66px + var(--safe-bottom));
+  }
+  .widgets-stack.locked {
+    overflow-y: hidden;
+  }
+  .widgets-inner {
+    gap: 10px;
+  }
+  .weather-card {
+    padding: 14px 14px 12px;
+  }
+  .days-card {
+    padding: 12px 8px 6px;
+  }
+  .weather-header {
+    margin-bottom: 8px;
+  }
+  .weather-subheader {
+    margin: -2px 0 6px;
+  }
+  .weather-hero {
+    margin: 0;
+    gap: 14px;
+  }
+  .weather-icon-big {
+    font-size: 50px;
+  }
+  .weather-temp {
+    font-size: 48px;
+  }
+  .weather-stats {
+    margin: 12px 0;
+  }
+  .stat-box {
+    padding: 8px 4px 6px;
+    gap: 3px;
+    border-radius: 14px;
+  }
+  .rain-alert {
+    margin: -2px 0 10px;
+    padding: 8px 12px;
+  }
+  .section-head {
+    margin-bottom: 6px;
+  }
+  .hour-item {
+    padding: 8px 6px 7px;
+    gap: 4px;
+  }
+  .day-row {
+    padding-top: 7px;
+    padding-bottom: 7px;
+  }
+
+  /* Step 1: drop what is repeated elsewhere (today's high/low is also in
+     the 5-day list) and the tile captions (the icons say it) */
+  html.fit-1 .weather-hilo,
+  html.fit-1 .stat-label {
+    display: none;
+  }
+
+  /* Step 2: smaller hero, no empty rain lines, tighter rows */
+  html.fit-2 .weather-icon-big {
+    font-size: 42px;
+  }
+  html.fit-2 .weather-temp {
+    font-size: 42px;
+  }
+  html.fit-2 .weather-unit {
+    font-size: 16px;
+    margin-top: 6px;
+  }
+  html.fit-2 .weather-stats {
+    margin: 8px 0;
+  }
+  html.fit-2 .hour-pop.empty {
+    display: none;
+  }
+  html.fit-2 .day-row {
+    padding-top: 5px;
+    padding-bottom: 5px;
+  }
+
+  /* Step 3 (very small phones): less air everywhere */
+  html.fit-3 .widgets-stack {
+    padding-top: calc(6px + var(--safe-top));
+    padding-bottom: calc(60px + var(--safe-bottom));
+  }
+  html.fit-3 .widgets-inner {
+    gap: 8px;
+  }
+  html.fit-3 .weather-card {
+    padding: 10px 12px 10px;
+  }
+  html.fit-3 .days-card {
+    padding: 8px 6px 4px;
+  }
+  html.fit-3 .weather-header {
+    margin-bottom: 4px;
+  }
+  html.fit-3 .hour-item {
+    padding: 6px 5px 5px;
+  }
+  html.fit-3 .section-head {
+    margin-bottom: 4px;
+  }
+  html.fit-3 .day-row {
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+}
+
+/* =====================================================================
  * Arabic / right-to-left
  * ===================================================================== */
 
